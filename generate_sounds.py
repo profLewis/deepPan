@@ -34,7 +34,7 @@ NOTE_FREQUENCIES = {
 # Format: index -> (note_name, octave, ring_type)
 #
 # Outer (4ths): O8=F#, O9=C#, O10=Ab, O11=Eb, O0=Bb, O1=F, O2=C, O3=G, O4=D, O5=A, O6=E, O7=B
-# Central (5ths): C9=F#, C10=C#, C11=Ab, C0=Eb, C1=Bb, C2=F, C3=C, C4=G, C5=D, C6=A, C7=E, C8=B
+# Central (5ths): C10=F#, C11=C#, C0=Ab, C1=Eb, C2=Bb, C3=F, C4=C, C5=G, C6=D, C7=A, C8=E, C9=B
 # Inner (6ths): I0=C, I1=E, I2=D, I3=C#, I4=Eb
 NOTE_MAP = {
     # Inner Ring (5 notes, 6th octave)
@@ -45,18 +45,18 @@ NOTE_MAP = {
     'I4': ('Eb', 6, 'inner'),
 
     # Central Ring (12 notes, 5th octave)
-    'C0': ('Eb', 5, 'central'),
-    'C1': ('Bb', 5, 'central'),
-    'C2': ('F', 5, 'central'),
-    'C3': ('C', 5, 'central'),
-    'C4': ('G', 5, 'central'),
-    'C5': ('D', 5, 'central'),
-    'C6': ('A', 5, 'central'),
-    'C7': ('E', 5, 'central'),
-    'C8': ('B', 5, 'central'),
-    'C9': ('F#', 5, 'central'),
-    'C10': ('C#', 5, 'central'),
-    'C11': ('Ab', 5, 'central'),
+    'C0': ('Ab', 5, 'central'),
+    'C1': ('Eb', 5, 'central'),
+    'C2': ('Bb', 5, 'central'),
+    'C3': ('F', 5, 'central'),
+    'C4': ('C', 5, 'central'),
+    'C5': ('G', 5, 'central'),
+    'C6': ('D', 5, 'central'),
+    'C7': ('A', 5, 'central'),
+    'C8': ('E', 5, 'central'),
+    'C9': ('B', 5, 'central'),
+    'C10': ('F#', 5, 'central'),
+    'C11': ('C#', 5, 'central'),
 
     # Outer Ring (12 notes, 4th octave)
     'O0': ('Bb', 4, 'outer'),

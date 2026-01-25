@@ -15,8 +15,8 @@ import matplotlib.patheffects as pe
 # Note assignments for each ring (indexed from position 0)
 # Outer: O8=F#, O9=C#, O10=Ab, O11=Eb, O0=Bb, O1=F, O2=C, O3=G, O4=D, O5=A, O6=E, O7=B
 OUTER_NOTES = ['Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'Ab', 'Eb']  # 4ths
-# Central: C9=F#, C10=C#, C11=Ab, C0=Eb, C1=Bb, C2=F, C3=C, C4=G, C5=D, C6=A, C7=E, C8=B
-CENTRAL_NOTES = ['Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'Ab']  # 5ths
+# Central: C10=F#, C11=C#, C0=Ab, C1=Eb, C2=Bb, C3=F, C4=C, C5=G, C6=D, C7=A, C8=E, C9=B
+CENTRAL_NOTES = ['Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#']  # 5ths
 # Inner: I0=C, I1=E, I2=D, I3=C#, I4=Eb
 INNER_NOTES = ['C', 'E', 'D', 'C#', 'Eb']  # 6ths
 
