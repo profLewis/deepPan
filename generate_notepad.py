@@ -14,9 +14,18 @@ import math
 CM_TO_MM = 10.0
 
 # Thickness for the solids (mm)
-PAN_THICKNESS = 3.0       # Thickness of the pan playing surface (downward)
-GROVE_DEPTH = 3.0         # Groove thickness downward (same as pan)
-GROVE_PROTRUSION = 1.5    # Groove protrusion upward (ridge above surface)
+PAN_THICKNESS = 1.5       # Thickness of the pan playing surface (downward)
+GROVE_DEPTH = 1.5         # Groove thickness downward (same as pan)
+GROVE_PROTRUSION = 0.8    # Groove protrusion upward (ridge above surface)
+
+# Mounting cylinder parameters (mm)
+MOUNT_INNER_DIAMETER = 25.0   # Internal diameter
+MOUNT_DEPTH = 9.0             # Cylinder depth
+MOUNT_WALL_THICKNESS = 2.5    # Wall thickness
+MOUNT_THREAD_PITCH = 2.0      # Thread pitch
+MOUNT_THREAD_DEPTH = 1.0      # Thread depth (outward from wall)
+MOUNT_NOTCH_WIDTH = 1.5       # Wire notch width
+MOUNT_SEGMENTS = 48           # Resolution for cylinder
 
 # Note mapping: (grove_object, pan_object) -> (index, note, ring, octave)
 NOTE_MAPPING = {
@@ -159,6 +168,254 @@ def compute_vertex_normals(vertices, faces):
             vertex_normals[i] = np.array([0, -1, 0])  # Default downward
 
     return vertex_normals
+
+
+def compute_surface_normal(vertices, faces):
+    """Compute the average surface normal weighted by face area."""
+    total_normal = np.zeros(3)
+    total_area = 0
+
+    for face in faces:
+        if len(face) < 3:
+            continue
+        v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+        cross = np.cross(edge1, edge2)
+        area = np.linalg.norm(cross) / 2
+        if area > 0:
+            normal = cross / (2 * area)
+            total_normal += normal * area
+            total_area += area
+
+    if total_area > 0:
+        total_normal = total_normal / np.linalg.norm(total_normal)
+    else:
+        total_normal = np.array([0, -1, 0])
+
+    return total_normal
+
+
+def compute_interior_centroid(vertices, faces, normal, thickness_down, thickness_up=0):
+    """
+    Compute a centroid guaranteed to be inside the thickened volume.
+
+    Takes the surface centroid and offsets it to the middle of the thickness.
+    """
+    # Surface centroid (average of all vertices)
+    surface_centroid = vertices.mean(axis=0)
+
+    # The volume extends from (surface - thickness_down*normal) to (surface + thickness_up*normal)
+    # The middle of this range is: surface + (thickness_up - thickness_down)/2 * normal
+    offset = (thickness_up - thickness_down) / 2.0
+    interior_centroid = surface_centroid + normal * offset
+
+    return interior_centroid, surface_centroid
+
+
+def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thread_pitch,
+                                      thread_depth, notch_width, segments=MOUNT_SEGMENTS):
+    """
+    Generate a threaded mounting cylinder with a wire notch.
+
+    The cylinder is centered at origin, extending downward along -Z axis.
+    External threads on the outside, notch cut from top to bottom.
+
+    Returns vertices and faces for the mesh.
+    """
+    inner_r = inner_diameter / 2
+    outer_r = inner_r + wall_thickness
+    thread_outer_r = outer_r + thread_depth
+
+    vertices = []
+    faces = []
+
+    # Calculate notch angle (for removing vertices in that region)
+    notch_half_angle = math.asin(notch_width / 2 / outer_r) if notch_width < outer_r * 2 else math.pi / 4
+
+    # Generate rings at top and bottom
+    # We'll create: inner top, outer top (with threads), inner bottom, outer bottom (with threads)
+
+    def is_in_notch(angle):
+        """Check if angle is within the notch region (centered at angle=0)."""
+        # Normalize angle to -pi to pi
+        a = angle % (2 * math.pi)
+        if a > math.pi:
+            a -= 2 * math.pi
+        return abs(a) < notch_half_angle
+
+    # Generate vertex rings
+    # Top inner ring
+    top_inner_start = len(vertices)
+    top_inner_indices = []
+    for i in range(segments):
+        angle = 2 * math.pi * i / segments
+        if not is_in_notch(angle):
+            x = inner_r * math.cos(angle)
+            y = inner_r * math.sin(angle)
+            top_inner_indices.append(len(vertices))
+            vertices.append([x, y, 0])
+
+    # Bottom inner ring
+    bot_inner_start = len(vertices)
+    bot_inner_indices = []
+    for i in range(segments):
+        angle = 2 * math.pi * i / segments
+        if not is_in_notch(angle):
+            x = inner_r * math.cos(angle)
+            y = inner_r * math.sin(angle)
+            bot_inner_indices.append(len(vertices))
+            vertices.append([x, y, -depth])
+
+    # Thread profile along the outer surface
+    num_thread_turns = depth / thread_pitch
+    thread_steps_per_turn = segments
+    total_thread_steps = int(num_thread_turns * thread_steps_per_turn) + 1
+
+    # Generate thread helix vertices (outer surface with thread profile)
+    thread_rings = []
+    for t in range(total_thread_steps):
+        z = -t * thread_pitch / thread_steps_per_turn
+        if z < -depth:
+            z = -depth
+
+        ring_indices = []
+        for i in range(segments):
+            angle = 2 * math.pi * i / segments
+
+            if is_in_notch(angle):
+                continue
+
+            # Thread profile: sinusoidal variation
+            thread_phase = (t + i) / thread_steps_per_turn
+            thread_offset = thread_depth * 0.5 * (1 + math.sin(2 * math.pi * thread_phase))
+            r = outer_r + thread_offset
+
+            x = r * math.cos(angle)
+            y = r * math.sin(angle)
+            ring_indices.append(len(vertices))
+            vertices.append([x, y, z])
+
+        if ring_indices:
+            thread_rings.append(ring_indices)
+
+    # Notch edge vertices (vertical edges where notch cuts through)
+    # Left edge of notch (at -notch_half_angle)
+    notch_left_angle = -notch_half_angle
+    notch_right_angle = notch_half_angle
+
+    notch_verts = {
+        'top_inner_left': len(vertices),
+        'top_inner_right': None,
+        'top_outer_left': None,
+        'top_outer_right': None,
+        'bot_inner_left': None,
+        'bot_inner_right': None,
+        'bot_outer_left': None,
+        'bot_outer_right': None,
+    }
+
+    # Inner left
+    vertices.append([inner_r * math.cos(notch_left_angle), inner_r * math.sin(notch_left_angle), 0])
+    notch_verts['top_inner_right'] = len(vertices)
+    vertices.append([inner_r * math.cos(notch_right_angle), inner_r * math.sin(notch_right_angle), 0])
+
+    notch_verts['top_outer_left'] = len(vertices)
+    vertices.append([outer_r * math.cos(notch_left_angle), outer_r * math.sin(notch_left_angle), 0])
+    notch_verts['top_outer_right'] = len(vertices)
+    vertices.append([outer_r * math.cos(notch_right_angle), outer_r * math.sin(notch_right_angle), 0])
+
+    notch_verts['bot_inner_left'] = len(vertices)
+    vertices.append([inner_r * math.cos(notch_left_angle), inner_r * math.sin(notch_left_angle), -depth])
+    notch_verts['bot_inner_right'] = len(vertices)
+    vertices.append([inner_r * math.cos(notch_right_angle), inner_r * math.sin(notch_right_angle), -depth])
+
+    notch_verts['bot_outer_left'] = len(vertices)
+    vertices.append([outer_r * math.cos(notch_left_angle), outer_r * math.sin(notch_left_angle), -depth])
+    notch_verts['bot_outer_right'] = len(vertices)
+    vertices.append([outer_r * math.cos(notch_right_angle), outer_r * math.sin(notch_right_angle), -depth])
+
+    # Build faces
+
+    # Top annular face (between inner and first thread ring, excluding notch)
+    if thread_rings and top_inner_indices:
+        first_ring = thread_rings[0]
+        # Connect top inner to first outer ring
+        n_inner = len(top_inner_indices)
+        n_outer = len(first_ring)
+        # Simple approach: fan triangulation from inner to outer
+        for i in range(min(n_inner, n_outer) - 1):
+            faces.append([top_inner_indices[i], first_ring[i], first_ring[i + 1]])
+            faces.append([top_inner_indices[i], first_ring[i + 1], top_inner_indices[i + 1]])
+
+    # Bottom annular face
+    if thread_rings and bot_inner_indices:
+        last_ring = thread_rings[-1]
+        n_inner = len(bot_inner_indices)
+        n_outer = len(last_ring)
+        for i in range(min(n_inner, n_outer) - 1):
+            faces.append([bot_inner_indices[i], bot_inner_indices[i + 1], last_ring[i + 1]])
+            faces.append([bot_inner_indices[i], last_ring[i + 1], last_ring[i]])
+
+    # Inner wall
+    for i in range(len(top_inner_indices) - 1):
+        faces.append([top_inner_indices[i], top_inner_indices[i + 1],
+                     bot_inner_indices[i + 1], bot_inner_indices[i]])
+
+    # Outer wall with threads (connect thread rings)
+    for r in range(len(thread_rings) - 1):
+        ring1 = thread_rings[r]
+        ring2 = thread_rings[r + 1]
+        n = min(len(ring1), len(ring2))
+        for i in range(n - 1):
+            faces.append([ring1[i], ring1[i + 1], ring2[i + 1], ring2[i]])
+
+    # Notch faces (walls of the notch)
+    # Left wall of notch
+    faces.append([notch_verts['top_inner_left'], notch_verts['top_outer_left'],
+                  notch_verts['bot_outer_left'], notch_verts['bot_inner_left']])
+    # Right wall of notch
+    faces.append([notch_verts['top_outer_right'], notch_verts['top_inner_right'],
+                  notch_verts['bot_inner_right'], notch_verts['bot_outer_right']])
+    # Bottom of notch (connects left and right at outer radius)
+    # This is the "floor" of the notch channel
+    faces.append([notch_verts['top_outer_left'], notch_verts['top_outer_right'],
+                  notch_verts['bot_outer_right'], notch_verts['bot_outer_left']])
+
+    return np.array(vertices), faces
+
+
+def transform_cylinder_to_normal(cylinder_verts, centroid, normal):
+    """
+    Transform cylinder from Z-down orientation to align with given normal.
+    Cylinder is moved so its top center is at the centroid.
+    """
+    # Default cylinder points down along -Z
+    # We need to rotate so -Z aligns with -normal (cylinder extends away from surface)
+
+    z_axis = np.array([0, 0, -1])
+    target = -normal / np.linalg.norm(normal)
+
+    # Rotation matrix from z_axis to target
+    v = np.cross(z_axis, target)
+    c = np.dot(z_axis, target)
+
+    if np.linalg.norm(v) < 1e-10:
+        if c > 0:
+            rot_matrix = np.eye(3)
+        else:
+            # 180 degree rotation around X axis
+            rot_matrix = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    else:
+        s = np.linalg.norm(v)
+        kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        rot_matrix = np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (s ** 2))
+
+    # Apply rotation then translation
+    rotated = cylinder_verts @ rot_matrix.T
+    translated = rotated + centroid
+
+    return translated
 
 
 def find_boundary_edges(faces):
@@ -405,6 +662,10 @@ def generate_notepad(note_index, obj_path, output_dir,
     grove_verts, grove_faces = extract_object_mesh(objects, grove_obj, all_vertices)
     print(f"  Grove: {len(grove_verts)} vertices, {len(grove_faces)} faces")
 
+    # Compute surface normal from pan (the playing surface defines the orientation)
+    pan_normal = compute_surface_normal(pan_verts, pan_faces)
+    print(f"  Pan surface normal: ({pan_normal[0]:.4f}, {pan_normal[1]:.4f}, {pan_normal[2]:.4f})")
+
     # Thicken pan surface (downward only)
     print(f"Thickening pan surface (down: {pan_thickness}mm)...")
     pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
@@ -412,6 +673,12 @@ def generate_notepad(note_index, obj_path, output_dir,
                                                         thickness_up=0)
     print(f"  Pan solid: {len(pan_solid_verts)} vertices, {len(pan_solid_faces)} faces")
     print(f"  Pan boundary loops: {len(find_all_boundary_loops(find_boundary_edges(pan_faces)))}")
+
+    # Compute interior centroid for pan (must lie within the solid volume)
+    pan_interior_centroid, pan_surface_centroid = compute_interior_centroid(
+        pan_verts, pan_faces, pan_normal, pan_thickness, 0)
+    print(f"  Pan surface centroid: ({pan_surface_centroid[0]:.2f}, {pan_surface_centroid[1]:.2f}, {pan_surface_centroid[2]:.2f})")
+    print(f"  Pan interior centroid: ({pan_interior_centroid[0]:.2f}, {pan_interior_centroid[1]:.2f}, {pan_interior_centroid[2]:.2f})")
 
     # Thicken grove (downward + slight protrusion upward)
     print(f"Thickening grove (down: {grove_depth}mm, up: {grove_protrusion}mm)...")
@@ -421,16 +688,54 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"  Grove solid: {len(grove_solid_verts)} vertices, {len(grove_solid_faces)} faces")
     print(f"  Grove boundary loops: {len(find_all_boundary_loops(find_boundary_edges(grove_faces)))}")
 
-    # Combine the two solids
-    print(f"Combining solids...")
+    # Combine pan and groove solids
+    print(f"Combining pan and groove...")
     n_pan_solid_verts = len(pan_solid_verts)
     solid_verts = np.vstack([pan_solid_verts, grove_solid_verts])
     solid_faces = pan_solid_faces + [[idx + n_pan_solid_verts for idx in face] for face in grove_solid_faces]
-    print(f"  Combined solid: {len(solid_verts)} vertices, {len(solid_faces)} faces")
+    print(f"  Pan+Grove solid: {len(solid_verts)} vertices, {len(solid_faces)} faces")
+
+    # Combined note pad properties (use pan's normal and centroid as reference)
+    notepad_normal = pan_normal
+    notepad_centroid = pan_interior_centroid
+
+    # Generate mounting cylinder
+    print(f"Generating mounting cylinder...")
+    print(f"  Inner diameter: {MOUNT_INNER_DIAMETER}mm, Depth: {MOUNT_DEPTH}mm")
+    print(f"  Thread pitch: {MOUNT_THREAD_PITCH}mm, Notch width: {MOUNT_NOTCH_WIDTH}mm")
+
+    cylinder_verts, cylinder_faces = generate_threaded_mount_cylinder(
+        inner_diameter=MOUNT_INNER_DIAMETER,
+        depth=MOUNT_DEPTH,
+        wall_thickness=MOUNT_WALL_THICKNESS,
+        thread_pitch=MOUNT_THREAD_PITCH,
+        thread_depth=MOUNT_THREAD_DEPTH,
+        notch_width=MOUNT_NOTCH_WIDTH
+    )
+    print(f"  Cylinder: {len(cylinder_verts)} vertices, {len(cylinder_faces)} faces")
+
+    # Position cylinder at pan surface centroid, oriented along normal
+    # The cylinder top should be at the surface, extending downward (into the pan)
+    cylinder_verts_transformed = transform_cylinder_to_normal(
+        cylinder_verts, pan_surface_centroid, notepad_normal)
+
+    # Add cylinder to combined mesh
+    n_solid_verts = len(solid_verts)
+    solid_verts = np.vstack([solid_verts, cylinder_verts_transformed])
+    solid_faces = solid_faces + [[idx + n_solid_verts for idx in face] for face in cylinder_faces]
+    print(f"  Combined with cylinder: {len(solid_verts)} vertices, {len(solid_faces)} faces")
+
+    print(f"\nNote pad properties (before centering):")
+    print(f"  Normal vector: ({notepad_normal[0]:.6f}, {notepad_normal[1]:.6f}, {notepad_normal[2]:.6f})")
+    print(f"  Surface centroid: ({pan_surface_centroid[0]:.2f}, {pan_surface_centroid[1]:.2f}, {pan_surface_centroid[2]:.2f}) mm")
 
     # Center at origin
     solid_verts, offset = center_mesh(solid_verts)
     print(f"  Centered (offset: {offset[0]:.1f}, {offset[1]:.1f}, {offset[2]:.1f})")
+
+    # Adjust centroid to centered coordinate system
+    notepad_centroid_centered = notepad_centroid - offset
+    print(f"  Interior centroid (centered): ({notepad_centroid_centered[0]:.2f}, {notepad_centroid_centered[1]:.2f}, {notepad_centroid_centered[2]:.2f}) mm")
 
     # Calculate bounding box
     bbox_min = solid_verts.min(axis=0)
@@ -467,24 +772,92 @@ def generate_notepad(note_index, obj_path, output_dir,
         'note': note_name,
         'octave': octave,
         'ring': ring,
+        'normal': notepad_normal.tolist(),  # Unit normal vector of playing surface
+        'centroid': notepad_centroid_centered.tolist(),  # Interior centroid (centered coords)
+        'centroid_original': notepad_centroid.tolist(),  # Interior centroid (original coords, mm)
         'vertices': solid_verts,
         'faces': solid_faces,
-        'bbox_size': bbox_size,
+        'bbox_size': bbox_size.tolist(),
         'obj_path': str(obj_path),
         'stl_path': str(stl_path)
     }
 
 
+def save_notepad_properties(results, output_path):
+    """Save note pad properties to JSON file."""
+    import json
+
+    # Extract properties (exclude large vertex/face data)
+    properties = []
+    for r in results:
+        props = {
+            'index': r['index'],
+            'note': r['note'],
+            'octave': r['octave'],
+            'ring': r['ring'],
+            'normal': r['normal'],
+            'centroid': r['centroid'],
+            'centroid_original': r['centroid_original'],
+            'bbox_size': r['bbox_size'],
+            'obj_path': r['obj_path'],
+            'stl_path': r['stl_path']
+        }
+        properties.append(props)
+
+    with open(output_path, 'w') as f:
+        json.dump(properties, f, indent=2)
+
+    print(f"Saved properties to: {output_path}")
+
+
 def main():
+    import sys
     obj_path = "data/Tenor Pan only.obj"
     output_dir = "data/notepads"
 
-    # Generate test note: O0 (F#4) - outer ring
+    # Check for command line args
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--all':
+            # Generate all 29 note pads
+            print("Generating all 29 note pads...")
+            results = []
+            for note_index in sorted(NOTE_BY_INDEX.keys()):
+                result = generate_notepad(note_index, obj_path, output_dir)
+                if result:
+                    results.append(result)
+
+            if results:
+                # Save all properties to JSON
+                save_notepad_properties(results, Path(output_dir) / "notepad_properties.json")
+                print(f"\n{'='*60}")
+                print(f"Generated {len(results)} note pads")
+                print(f"Properties saved to: {output_dir}/notepad_properties.json")
+                print(f"{'='*60}")
+            return
+        else:
+            # Generate specific note
+            note_index = sys.argv[1]
+            result = generate_notepad(note_index, obj_path, output_dir)
+            if result:
+                save_notepad_properties([result], Path(output_dir) / f"notepad_{note_index}_properties.json")
+            return
+
+    # Default: generate test note O0
     result = generate_notepad("O0", obj_path, output_dir)
 
     if result:
         print(f"\nTest note pad generated successfully!")
-        print(f"View the OBJ file in any 3D viewer, or import the STL into a slicer for printing.")
+        print(f"\nNote pad properties:")
+        print(f"  Normal: ({result['normal'][0]:.6f}, {result['normal'][1]:.6f}, {result['normal'][2]:.6f})")
+        print(f"  Centroid (centered): ({result['centroid'][0]:.2f}, {result['centroid'][1]:.2f}, {result['centroid'][2]:.2f}) mm")
+        print(f"  Centroid (original): ({result['centroid_original'][0]:.2f}, {result['centroid_original'][1]:.2f}, {result['centroid_original'][2]:.2f}) mm")
+        print(f"\nUsage:")
+        print(f"  python generate_notepad.py          # Generate O0 (test)")
+        print(f"  python generate_notepad.py C5       # Generate specific note")
+        print(f"  python generate_notepad.py --all    # Generate all 29 notes")
+
+        # Save properties to JSON
+        save_notepad_properties([result], Path(output_dir) / "notepad_properties.json")
 
 
 if __name__ == "__main__":
