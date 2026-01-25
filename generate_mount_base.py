@@ -34,7 +34,7 @@ BASE_THREAD_HEIGHT = 9.0        # Height of threaded section (matches notepad de
 BASE_PLATE_THICKNESS = 3.0      # Thickness of the base plate
 PLATFORM_DIAMETER = 20.0        # Central platform diameter
 PLATFORM_HEIGHT = 5.0           # Platform height above base interior
-PLATFORM_RECESS = 3.0           # How far below flush the platform top sits
+PLATFORM_RECESS = 7.0           # How far below flush the platform top sits
 
 # Knurl parameters
 KNURL_COUNT = 24                # Number of knurls around circumference
