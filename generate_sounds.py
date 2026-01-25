@@ -33,44 +33,44 @@ NOTE_FREQUENCIES = {
 # Note mapping based on 3D model analysis
 # Format: index -> (note_name, octave, ring_type)
 #
-# Outer (4ths): O0=Bb, O1=F, O2=C, O3=G, O4=D, O5=A, O6=E, O7=B, O8=F#, O9=C#, O10=Ab, O11=Eb
-# Central (5ths): C0=C#, C1=Ab, C2=Eb, C3=Bb, C4=F, C5=C, C6=G, C7=D, C8=A, C9=E, C10=B, C11=F#
-# Inner (6ths): I0=Eb, I1=C, I2=E, I3=D, I4=C#
+# Outer (4ths): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+# Central (5ths): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+# Inner (6ths): C#, E, D, C, Eb
 NOTE_MAP = {
-    # Inner Ring (5 notes, 6th octave) - rotated 1 anti-clockwise
-    'I0': ('Eb', 6, 'inner'),
-    'I1': ('C', 6, 'inner'),
-    'I2': ('E', 6, 'inner'),
-    'I3': ('D', 6, 'inner'),
-    'I4': ('C#', 6, 'inner'),
+    # Inner Ring (5 notes, 6th octave): C#, E, D, C, Eb
+    'I0': ('C#', 6, 'inner'),
+    'I1': ('E', 6, 'inner'),
+    'I2': ('D', 6, 'inner'),
+    'I3': ('C', 6, 'inner'),
+    'I4': ('Eb', 6, 'inner'),
 
-    # Central Ring (12 notes, 5th octave) - rotated 1 anti-clockwise
-    'C0': ('C#', 5, 'central'),
-    'C1': ('Ab', 5, 'central'),
-    'C2': ('Eb', 5, 'central'),
-    'C3': ('Bb', 5, 'central'),
-    'C4': ('F', 5, 'central'),
-    'C5': ('C', 5, 'central'),
-    'C6': ('G', 5, 'central'),
-    'C7': ('D', 5, 'central'),
-    'C8': ('A', 5, 'central'),
-    'C9': ('E', 5, 'central'),
-    'C10': ('B', 5, 'central'),
-    'C11': ('F#', 5, 'central'),
+    # Central Ring (12 notes, 5th octave): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+    'C0': ('F#', 5, 'central'),
+    'C1': ('B', 5, 'central'),
+    'C2': ('E', 5, 'central'),
+    'C3': ('A', 5, 'central'),
+    'C4': ('D', 5, 'central'),
+    'C5': ('G', 5, 'central'),
+    'C6': ('C', 5, 'central'),
+    'C7': ('F', 5, 'central'),
+    'C8': ('Bb', 5, 'central'),
+    'C9': ('Eb', 5, 'central'),
+    'C10': ('Ab', 5, 'central'),
+    'C11': ('C#', 5, 'central'),
 
-    # Outer Ring (12 notes, 4th octave) - unchanged
-    'O0': ('Bb', 4, 'outer'),
-    'O1': ('F', 4, 'outer'),
-    'O2': ('C', 4, 'outer'),
-    'O3': ('G', 4, 'outer'),
+    # Outer Ring (12 notes, 4th octave): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+    'O0': ('F#', 4, 'outer'),
+    'O1': ('B', 4, 'outer'),
+    'O2': ('E', 4, 'outer'),
+    'O3': ('A', 4, 'outer'),
     'O4': ('D', 4, 'outer'),
-    'O5': ('A', 4, 'outer'),
-    'O6': ('E', 4, 'outer'),
-    'O7': ('B', 4, 'outer'),
-    'O8': ('F#', 4, 'outer'),
-    'O9': ('C#', 4, 'outer'),
+    'O5': ('G', 4, 'outer'),
+    'O6': ('C', 4, 'outer'),
+    'O7': ('F', 4, 'outer'),
+    'O8': ('Bb', 4, 'outer'),
+    'O9': ('Eb', 4, 'outer'),
     'O10': ('Ab', 4, 'outer'),
-    'O11': ('Eb', 4, 'outer'),
+    'O11': ('C#', 4, 'outer'),
 }
 
 

@@ -14,40 +14,41 @@ import matplotlib.patheffects as pe
 
 # Fixed note mapping based on 3D object names
 # Maps (grove_object, pan_object) -> (index, note, ring_type)
-# Outer: O0 at top (~90°), Central: C0 at top (~92°), Inner: I0 at top (~110°)
+# Notes: O0-O11 and C0-C11 use (F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#)
+#        I0-I4 use (C#, E, D, C, Eb)
 NOTE_MAPPING = {
-    # Outer Ring (4ths) - unchanged
-    ('object_58', 'object_62'): ('O0', 'Bb', 'outer'),
-    ('object_57', 'object_63'): ('O1', 'F', 'outer'),
-    ('object_56', 'object_64'): ('O2', 'C', 'outer'),
-    ('object_55', 'object_90'): ('O3', 'G', 'outer'),
+    # Outer Ring (4ths): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+    ('object_58', 'object_62'): ('O0', 'F#', 'outer'),
+    ('object_57', 'object_63'): ('O1', 'B', 'outer'),
+    ('object_56', 'object_64'): ('O2', 'E', 'outer'),
+    ('object_55', 'object_90'): ('O3', 'A', 'outer'),
     ('object_54', 'object_65'): ('O4', 'D', 'outer'),
-    ('object_53', 'object_66'): ('O5', 'A', 'outer'),
-    ('object_59', 'object_60'): ('O6', 'E', 'outer'),
-    ('object_52', 'object_61'): ('O7', 'B', 'outer'),
-    ('object_51', 'object_67'): ('O8', 'F#', 'outer'),
-    ('object_50', 'object_88'): ('O9', 'C#', 'outer'),
+    ('object_53', 'object_66'): ('O5', 'G', 'outer'),
+    ('object_59', 'object_60'): ('O6', 'C', 'outer'),
+    ('object_52', 'object_61'): ('O7', 'F', 'outer'),
+    ('object_51', 'object_67'): ('O8', 'Bb', 'outer'),
+    ('object_50', 'object_88'): ('O9', 'Eb', 'outer'),
     ('object_49', 'object_68'): ('O10', 'Ab', 'outer'),
-    ('object_48', 'object_69'): ('O11', 'Eb', 'outer'),
-    # Central Ring (5ths) - rotated 1 anti-clockwise
-    ('object_25', 'object_45'): ('C0', 'C#', 'central'),
-    ('object_24', 'object_46'): ('C1', 'Ab', 'central'),
-    ('object_23', 'object_47'): ('C2', 'Eb', 'central'),
-    ('object_22', 'object_37'): ('C3', 'Bb', 'central'),
-    ('object_21', 'object_38'): ('C4', 'F', 'central'),
-    ('object_20', 'object_39'): ('C5', 'C', 'central'),
-    ('object_73', 'object_31'): ('C6', 'G', 'central'),
-    ('object_30', 'object_40'): ('C7', 'D', 'central'),
-    ('object_29', 'object_41'): ('C8', 'A', 'central'),
-    ('object_28', 'object_42'): ('C9', 'E', 'central'),
-    ('object_27', 'object_43'): ('C10', 'B', 'central'),
-    ('object_26', 'object_44'): ('C11', 'F#', 'central'),
-    # Inner Ring (6ths) - rotated 1 anti-clockwise
-    ('object_72', 'object_36'): ('I0', 'Eb', 'inner'),
-    ('object_71', 'object_32'): ('I1', 'C', 'inner'),
-    ('object_19', 'object_33'): ('I2', 'E', 'inner'),
-    ('object_70', 'object_34'): ('I3', 'D', 'inner'),
-    ('object_18', 'object_35'): ('I4', 'C#', 'inner'),
+    ('object_48', 'object_69'): ('O11', 'C#', 'outer'),
+    # Central Ring (5ths): F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+    ('object_25', 'object_45'): ('C0', 'F#', 'central'),
+    ('object_24', 'object_46'): ('C1', 'B', 'central'),
+    ('object_23', 'object_47'): ('C2', 'E', 'central'),
+    ('object_22', 'object_37'): ('C3', 'A', 'central'),
+    ('object_21', 'object_38'): ('C4', 'D', 'central'),
+    ('object_20', 'object_39'): ('C5', 'G', 'central'),
+    ('object_73', 'object_31'): ('C6', 'C', 'central'),
+    ('object_30', 'object_40'): ('C7', 'F', 'central'),
+    ('object_29', 'object_41'): ('C8', 'Bb', 'central'),
+    ('object_28', 'object_42'): ('C9', 'Eb', 'central'),
+    ('object_27', 'object_43'): ('C10', 'Ab', 'central'),
+    ('object_26', 'object_44'): ('C11', 'C#', 'central'),
+    # Inner Ring (6ths): C#, E, D, C, Eb
+    ('object_72', 'object_36'): ('I0', 'C#', 'inner'),
+    ('object_71', 'object_32'): ('I1', 'E', 'inner'),
+    ('object_19', 'object_33'): ('I2', 'D', 'inner'),
+    ('object_70', 'object_34'): ('I3', 'C', 'inner'),
+    ('object_18', 'object_35'): ('I4', 'Eb', 'inner'),
 }
 
 
