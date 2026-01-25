@@ -12,10 +12,13 @@ from matplotlib.collections import PolyCollection
 from matplotlib.path import Path
 import matplotlib.patheffects as pe
 
-# Note assignments for each ring
-OUTER_NOTES = ['F#', 'B', 'E', 'A', 'D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab', 'C#']  # 4ths
-CENTRAL_NOTES = ['F#', 'B', 'E', 'A', 'D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab', 'C#']  # 5ths
-INNER_NOTES = ['C#', 'E', 'D', 'C', 'Eb']  # 6ths
+# Note assignments for each ring (indexed from position 0)
+# Outer: O8=F#, O9=C#, O10=Ab, O11=Eb, O0=Bb, O1=F, O2=C, O3=G, O4=D, O5=A, O6=E, O7=B
+OUTER_NOTES = ['Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'Ab', 'Eb']  # 4ths
+# Central: C9=F#, C10=C#, C11=Ab, C0=Eb, C1=Bb, C2=F, C3=C, C4=G, C5=D, C6=A, C7=E, C8=B
+CENTRAL_NOTES = ['Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'Ab']  # 5ths
+# Inner: I0=C, I1=E, I2=D, I3=C#, I4=Eb
+INNER_NOTES = ['C', 'E', 'D', 'C#', 'Eb']  # 6ths
 
 
 def parse_obj_file(filepath):
