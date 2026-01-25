@@ -27,7 +27,7 @@ MOUNT_DEPTH = 9.0             # Cylinder depth
 MOUNT_WALL_THICKNESS = 2.5    # Wall thickness
 MOUNT_THREAD_PITCH = 2.0      # Thread pitch
 MOUNT_THREAD_DEPTH = 1.0      # Thread depth (outward from wall)
-MOUNT_NOTCH_WIDTH = 1.5       # Wire notch width
+MOUNT_NOTCH_WIDTH = 2.0       # Wire notch width
 MOUNT_SEGMENTS = 48           # Resolution for cylinder
 
 # Minimum pad size to accommodate cylinder (with margin)
@@ -237,45 +237,27 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
     vertices = []
     faces = []
 
-    # Calculate which segment indices fall within the notch
     notch_half_width = notch_width / 2
-    # Notch spans from -notch_half_width to +notch_half_width in Y at X=inner_r to outer_r
-    # We'll create a C-shaped cross section (cylinder with notch cut out)
 
-    # Notch angle at inner radius
-    notch_angle_inner = math.asin(min(notch_half_width / inner_r, 1.0))
-    notch_angle_outer = math.asin(min(notch_half_width / thread_r, 1.0))
+    # Calculate notch angle (use the angle that gives notch_half_width at inner radius)
+    notch_half_angle = math.atan2(notch_half_width, inner_r)
 
-    # Determine which segments to skip (those in the notch region)
-    def in_notch(angle):
-        # Normalize to -pi to pi
-        a = angle % (2 * math.pi)
-        if a > math.pi:
-            a -= 2 * math.pi
-        return abs(a) < notch_angle_outer
+    # Number of segments to skip for notch (at least 2)
+    notch_segments = max(2, int(notch_half_angle * 2 * segments / (2 * math.pi)) + 1)
 
-    # Find the segment indices at notch boundaries
-    notch_start_seg = None
-    notch_end_seg = None
-    for i in range(segments):
-        angle = 2 * math.pi * i / segments
-        if in_notch(angle) and notch_start_seg is None:
-            notch_start_seg = i
-        if not in_notch(angle) and notch_start_seg is not None and notch_end_seg is None:
-            notch_end_seg = i
-            break
+    # Make notch symmetric around segment 0
+    # Skip segments from (segments - notch_segments//2) to (notch_segments//2)
+    notch_start = segments - notch_segments // 2
+    notch_end = notch_segments - notch_segments // 2
 
-    if notch_start_seg is None:
-        notch_start_seg = 0
-    if notch_end_seg is None:
-        notch_end_seg = segments
+    def in_notch(seg_idx):
+        return seg_idx >= notch_start or seg_idx < notch_end
 
     # Number of Z levels
     z_levels = max(int(depth / (thread_pitch / 4)), 8)
 
-    # Generate vertices for inner surface (C-shape, excluding notch)
-    # And outer surface with threads
-    inner_rings = []  # Each ring is a dict mapping segment_index -> vertex_index
+    # Generate cylinder vertices (excluding notch segments)
+    inner_rings = []
     outer_rings = []
 
     for z_idx in range(z_levels + 1):
@@ -285,142 +267,122 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
         outer_ring = {}
 
         for i in range(segments):
+            if in_notch(i):
+                continue
+
             angle = 2 * math.pi * i / segments
 
-            if not in_notch(angle):
-                # Inner vertex
-                x = inner_r * math.cos(angle)
-                y = inner_r * math.sin(angle)
-                inner_ring[i] = len(vertices)
-                vertices.append([x, y, z])
+            # Inner vertex
+            inner_ring[i] = len(vertices)
+            vertices.append([inner_r * math.cos(angle), inner_r * math.sin(angle), z])
 
-                # Outer vertex with thread
-                thread_phase = (z_idx / z_levels * depth / thread_pitch + i / segments) % 1.0
-                if thread_phase < 0.5:
-                    thread_h = thread_depth * (thread_phase * 2)
-                else:
-                    thread_h = thread_depth * (2 - thread_phase * 2)
-                r = outer_r + thread_h
-                x = r * math.cos(angle)
-                y = r * math.sin(angle)
-                outer_ring[i] = len(vertices)
-                vertices.append([x, y, z])
+            # Outer vertex with thread profile
+            thread_phase = (z_idx / z_levels * depth / thread_pitch + i / segments) % 1.0
+            thread_h = thread_depth * (1 - abs(2 * thread_phase - 1))
+            r = outer_r + thread_h
+            outer_ring[i] = len(vertices)
+            vertices.append([r * math.cos(angle), r * math.sin(angle), z])
 
         inner_rings.append(inner_ring)
         outer_rings.append(outer_ring)
 
-    # Create notch boundary vertices (the edges where the notch cuts the cylinder)
-    # These run vertically at the notch edges
-    notch_boundary_inner_left = []  # Inner radius, left edge of notch (negative Y side)
-    notch_boundary_inner_right = []  # Inner radius, right edge of notch (positive Y side)
-    notch_boundary_outer_left = []
-    notch_boundary_outer_right = []
+    # Notch boundary angles (first and last non-notch segments)
+    valid_segs = sorted([i for i in range(segments) if not in_notch(i)])
+    first_valid = valid_segs[0]
+    last_valid = valid_segs[-1]
+
+    first_angle = 2 * math.pi * first_valid / segments
+    last_angle = 2 * math.pi * last_valid / segments
+
+    # Notch wall vertices (at the edges of the notch)
+    # Left wall at last_valid angle, right wall at first_valid angle
+    notch_inner_left = []  # at last_angle
+    notch_outer_left = []
+    notch_inner_right = []  # at first_angle
+    notch_outer_right = []
 
     for z_idx in range(z_levels + 1):
         z = -z_idx * depth / z_levels
 
-        # Left edge (negative Y)
-        notch_boundary_inner_left.append(len(vertices))
-        vertices.append([inner_r, -notch_half_width, z])
+        # Left edge (at last_angle, which is just before the notch going clockwise)
+        notch_inner_left.append(len(vertices))
+        vertices.append([inner_r * math.cos(last_angle), inner_r * math.sin(last_angle), z])
+        notch_outer_left.append(len(vertices))
+        vertices.append([thread_r * math.cos(last_angle), thread_r * math.sin(last_angle), z])
 
-        notch_boundary_outer_left.append(len(vertices))
-        vertices.append([thread_r, -notch_half_width, z])
+        # Right edge (at first_angle, which is just after the notch going clockwise)
+        notch_inner_right.append(len(vertices))
+        vertices.append([inner_r * math.cos(first_angle), inner_r * math.sin(first_angle), z])
+        notch_outer_right.append(len(vertices))
+        vertices.append([thread_r * math.cos(first_angle), thread_r * math.sin(first_angle), z])
 
-        # Right edge (positive Y)
-        notch_boundary_inner_right.append(len(vertices))
-        vertices.append([inner_r, notch_half_width, z])
+    # === BUILD FACES ===
 
-        notch_boundary_outer_right.append(len(vertices))
-        vertices.append([thread_r, notch_half_width, z])
-
-    # Build faces
-
-    # Top cap (z=0) - C-shaped annulus
-    ring_indices = sorted(inner_rings[0].keys())
-    for idx, i in enumerate(ring_indices[:-1]):
-        i_next = ring_indices[idx + 1]
+    # Top cap - connect inner to outer for each segment pair
+    for idx in range(len(valid_segs) - 1):
+        i = valid_segs[idx]
+        i_next = valid_segs[idx + 1]
         faces.append([inner_rings[0][i], outer_rings[0][i],
                      outer_rings[0][i_next], inner_rings[0][i_next]])
 
-    # Top cap notch edges
-    if ring_indices:
-        first_seg = ring_indices[0]
-        last_seg = ring_indices[-1]
-        # Left edge to first segment
-        faces.append([notch_boundary_inner_left[0], notch_boundary_outer_left[0],
-                     outer_rings[0][first_seg], inner_rings[0][first_seg]])
-        # Last segment to right edge
-        faces.append([inner_rings[0][last_seg], outer_rings[0][last_seg],
-                     notch_boundary_outer_right[0], notch_boundary_inner_right[0]])
+    # Top cap notch closure
+    faces.append([notch_inner_left[0], notch_outer_left[0],
+                 outer_rings[0][last_valid], inner_rings[0][last_valid]])
+    faces.append([inner_rings[0][first_valid], outer_rings[0][first_valid],
+                 notch_outer_right[0], notch_inner_right[0]])
+    # Top of notch opening
+    faces.append([notch_inner_right[0], notch_outer_right[0],
+                 notch_outer_left[0], notch_inner_left[0]])
 
-    # Bottom cap (z=-depth) - C-shaped annulus
-    ring_indices = sorted(inner_rings[-1].keys())
-    for idx, i in enumerate(ring_indices[:-1]):
-        i_next = ring_indices[idx + 1]
+    # Bottom cap
+    for idx in range(len(valid_segs) - 1):
+        i = valid_segs[idx]
+        i_next = valid_segs[idx + 1]
         faces.append([inner_rings[-1][i], inner_rings[-1][i_next],
                      outer_rings[-1][i_next], outer_rings[-1][i]])
 
-    # Bottom cap notch edges
-    if ring_indices:
-        first_seg = ring_indices[0]
-        last_seg = ring_indices[-1]
-        faces.append([notch_boundary_inner_left[-1], inner_rings[-1][first_seg],
-                     outer_rings[-1][first_seg], notch_boundary_outer_left[-1]])
-        faces.append([inner_rings[-1][last_seg], notch_boundary_inner_right[-1],
-                     notch_boundary_outer_right[-1], outer_rings[-1][last_seg]])
+    # Bottom cap notch closure
+    faces.append([notch_inner_left[-1], inner_rings[-1][last_valid],
+                 outer_rings[-1][last_valid], notch_outer_left[-1]])
+    faces.append([inner_rings[-1][first_valid], notch_inner_right[-1],
+                 notch_outer_right[-1], outer_rings[-1][first_valid]])
+    # Bottom of notch opening
+    faces.append([notch_inner_left[-1], notch_outer_left[-1],
+                 notch_outer_right[-1], notch_inner_right[-1]])
 
-    # Inner wall
+    # Inner wall (cylinder bore)
     for z_idx in range(z_levels):
-        ring_indices = sorted(set(inner_rings[z_idx].keys()) & set(inner_rings[z_idx+1].keys()))
-        for idx, i in enumerate(ring_indices[:-1]):
-            i_next = ring_indices[idx + 1]
+        for idx in range(len(valid_segs) - 1):
+            i = valid_segs[idx]
+            i_next = valid_segs[idx + 1]
             faces.append([inner_rings[z_idx][i], inner_rings[z_idx][i_next],
                          inner_rings[z_idx+1][i_next], inner_rings[z_idx+1][i]])
 
-    # Outer wall
+    # Outer wall (threaded surface)
     for z_idx in range(z_levels):
-        ring_indices = sorted(set(outer_rings[z_idx].keys()) & set(outer_rings[z_idx+1].keys()))
-        for idx, i in enumerate(ring_indices[:-1]):
-            i_next = ring_indices[idx + 1]
+        for idx in range(len(valid_segs) - 1):
+            i = valid_segs[idx]
+            i_next = valid_segs[idx + 1]
             faces.append([outer_rings[z_idx][i], outer_rings[z_idx+1][i],
                          outer_rings[z_idx+1][i_next], outer_rings[z_idx][i_next]])
 
-    # Notch walls (left and right sides of the notch)
-    # Left wall (connects inner left to outer left boundary)
+    # Notch left wall (radial face at last_angle)
     for z_idx in range(z_levels):
-        faces.append([notch_boundary_inner_left[z_idx], notch_boundary_outer_left[z_idx],
-                     notch_boundary_outer_left[z_idx+1], notch_boundary_inner_left[z_idx+1]])
+        faces.append([notch_inner_left[z_idx], inner_rings[z_idx][last_valid],
+                     inner_rings[z_idx+1][last_valid], notch_inner_left[z_idx+1]])
+        faces.append([outer_rings[z_idx][last_valid], notch_outer_left[z_idx],
+                     notch_outer_left[z_idx+1], outer_rings[z_idx+1][last_valid]])
+        faces.append([notch_inner_left[z_idx], notch_outer_left[z_idx],
+                     notch_outer_left[z_idx+1], notch_inner_left[z_idx+1]])
 
-    # Right wall
+    # Notch right wall (radial face at first_angle)
     for z_idx in range(z_levels):
-        faces.append([notch_boundary_outer_right[z_idx], notch_boundary_inner_right[z_idx],
-                     notch_boundary_inner_right[z_idx+1], notch_boundary_outer_right[z_idx+1]])
-
-    # Connect inner wall to notch boundaries
-    for z_idx in range(z_levels):
-        ring_indices = sorted(inner_rings[z_idx].keys())
-        if ring_indices:
-            first_seg = ring_indices[0]
-            last_seg = ring_indices[-1]
-            # Left side
-            faces.append([notch_boundary_inner_left[z_idx], inner_rings[z_idx][first_seg],
-                         inner_rings[z_idx+1][first_seg], notch_boundary_inner_left[z_idx+1]])
-            # Right side
-            faces.append([inner_rings[z_idx][last_seg], notch_boundary_inner_right[z_idx],
-                         notch_boundary_inner_right[z_idx+1], inner_rings[z_idx+1][last_seg]])
-
-    # Connect outer wall to notch boundaries
-    for z_idx in range(z_levels):
-        ring_indices = sorted(outer_rings[z_idx].keys())
-        if ring_indices:
-            first_seg = ring_indices[0]
-            last_seg = ring_indices[-1]
-            # Left side
-            faces.append([outer_rings[z_idx][first_seg], notch_boundary_outer_left[z_idx],
-                         notch_boundary_outer_left[z_idx+1], outer_rings[z_idx+1][first_seg]])
-            # Right side
-            faces.append([notch_boundary_outer_right[z_idx], outer_rings[z_idx][last_seg],
-                         outer_rings[z_idx+1][last_seg], notch_boundary_outer_right[z_idx+1]])
+        faces.append([inner_rings[z_idx][first_valid], notch_inner_right[z_idx],
+                     notch_inner_right[z_idx+1], inner_rings[z_idx+1][first_valid]])
+        faces.append([notch_outer_right[z_idx], outer_rings[z_idx][first_valid],
+                     outer_rings[z_idx+1][first_valid], notch_outer_right[z_idx+1]])
+        faces.append([notch_outer_right[z_idx], notch_inner_right[z_idx],
+                     notch_inner_right[z_idx+1], notch_outer_right[z_idx+1]])
 
     return np.array(vertices), faces
 
