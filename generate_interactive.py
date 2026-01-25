@@ -194,11 +194,11 @@ def generate_html(note_pads, output_path):
     center_x = all_points[:, 0].mean()
     center_y = all_points[:, 1].mean()
 
-    # Normalize coordinates to center at origin
+    # Normalize coordinates to center at origin and rotate 180 degrees (so F# is at top)
     for pad in note_pads:
-        pad['grove_path'] = [[p[0] - center_x, p[1] - center_y] for p in pad['grove_path']]
-        pad['pan_path'] = [[p[0] - center_x, p[1] - center_y] for p in pad['pan_path']]
-        pad['centroid'] = [pad['centroid'][0] - center_x, pad['centroid'][1] - center_y]
+        pad['grove_path'] = [[-(p[0] - center_x), -(p[1] - center_y)] for p in pad['grove_path']]
+        pad['pan_path'] = [[-(p[0] - center_x), -(p[1] - center_y)] for p in pad['pan_path']]
+        pad['centroid'] = [-(pad['centroid'][0] - center_x), -(pad['centroid'][1] - center_y)]
 
     # Calculate view box
     all_centered = []
@@ -454,12 +454,12 @@ def generate_html(note_pads, output_path):
                     g.appendChild(panPath);
                 }}
 
-                // Add label
+                // Add label (note name only)
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.classList.add('note-label');
                 label.setAttribute('x', note.centroid[0]);
                 label.setAttribute('y', note.centroid[1] + 0.3);
-                label.textContent = `${{note.idx}} ${{note.name}}`;
+                label.textContent = note.name;
                 g.appendChild(label);
 
                 svg.appendChild(g);
