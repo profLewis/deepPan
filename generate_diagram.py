@@ -12,13 +12,42 @@ from matplotlib.collections import PolyCollection
 from matplotlib.path import Path
 import matplotlib.patheffects as pe
 
-# Note assignments for each ring (indexed from position 0)
-# Outer: O8=F#, O9=C#, O10=Ab, O11=Eb, O0=Bb, O1=F, O2=C, O3=G, O4=D, O5=A, O6=E, O7=B
-OUTER_NOTES = ['Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'Ab', 'Eb']  # 4ths
-# Central: C10=F#, C11=C#, C0=Ab, C1=Eb, C2=Bb, C3=F, C4=C, C5=G, C6=D, C7=A, C8=E, C9=B
-CENTRAL_NOTES = ['Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#']  # 5ths
-# Inner: I0=C, I1=E, I2=D, I3=C#, I4=Eb
-INNER_NOTES = ['C', 'E', 'D', 'C#', 'Eb']  # 6ths
+# Fixed note mapping based on 3D object names
+# Maps (grove_object, pan_object) -> (index, note, ring_type)
+NOTE_MAPPING = {
+    # Outer Ring (4ths)
+    ('object_58', 'object_62'): ('O0', 'Bb', 'outer'),
+    ('object_57', 'object_63'): ('O1', 'F', 'outer'),
+    ('object_56', 'object_64'): ('O2', 'C', 'outer'),
+    ('object_55', 'object_90'): ('O3', 'G', 'outer'),
+    ('object_54', 'object_65'): ('O4', 'D', 'outer'),
+    ('object_53', 'object_66'): ('O5', 'A', 'outer'),
+    ('object_59', 'object_60'): ('O6', 'E', 'outer'),
+    ('object_52', 'object_61'): ('O7', 'B', 'outer'),
+    ('object_51', 'object_67'): ('O8', 'F#', 'outer'),
+    ('object_50', 'object_88'): ('O9', 'C#', 'outer'),
+    ('object_49', 'object_68'): ('O10', 'Ab', 'outer'),
+    ('object_48', 'object_69'): ('O11', 'Eb', 'outer'),
+    # Central Ring (5ths)
+    ('object_24', 'object_46'): ('C0', 'Ab', 'central'),
+    ('object_23', 'object_47'): ('C1', 'Eb', 'central'),
+    ('object_22', 'object_37'): ('C2', 'Bb', 'central'),
+    ('object_21', 'object_38'): ('C3', 'F', 'central'),
+    ('object_20', 'object_39'): ('C4', 'C', 'central'),
+    ('object_73', 'object_31'): ('C5', 'G', 'central'),
+    ('object_30', 'object_40'): ('C6', 'D', 'central'),
+    ('object_29', 'object_41'): ('C7', 'A', 'central'),
+    ('object_28', 'object_42'): ('C8', 'E', 'central'),
+    ('object_27', 'object_43'): ('C9', 'B', 'central'),
+    ('object_26', 'object_44'): ('C10', 'F#', 'central'),
+    ('object_25', 'object_45'): ('C11', 'C#', 'central'),
+    # Inner Ring (6ths)
+    ('object_71', 'object_32'): ('I0', 'C', 'inner'),
+    ('object_19', 'object_33'): ('I1', 'E', 'inner'),
+    ('object_70', 'object_34'): ('I2', 'D', 'inner'),
+    ('object_18', 'object_35'): ('I3', 'C#', 'inner'),
+    ('object_72', 'object_36'): ('I4', 'Eb', 'inner'),
+}
 
 
 def parse_obj_file(filepath):
@@ -189,22 +218,25 @@ def classify_rings(note_pads):
     return inner_ring, central_ring, outer_ring, center
 
 
-def assign_notes(ring, note_names):
-    """Assign note names to pads in a ring based on angular position.
+def assign_notes_from_mapping(note_pads):
+    """Assign note names to pads using the fixed NOTE_MAPPING dictionary.
 
-    Notes are assigned clockwise from the top (12 o'clock = 90°).
-    F# is at the top for outer and central rings.
+    This ensures the diagram exactly matches the documented object-to-note mapping.
     """
-    # Convert angle to clockwise from top (90°)
-    # This makes 90° → 0, then going clockwise: 60° → 30, 0° → 90, -90° → 180, etc.
-    def clockwise_from_top(angle):
-        return (90 - angle) % 360
+    for pad in note_pads:
+        key = (pad['grove'], pad['pan'])
+        if key in NOTE_MAPPING:
+            index, note, ring_type = NOTE_MAPPING[key]
+            pad['index'] = index
+            pad['note'] = note
+            pad['ring_type'] = ring_type
+        else:
+            # Fallback for any unmatched pads
+            pad['index'] = '??'
+            pad['note'] = '?'
+            pad['ring_type'] = 'unknown'
 
-    sorted_ring = sorted(ring, key=lambda x: clockwise_from_top(x['angle']))
-    for i, pad in enumerate(sorted_ring):
-        pad['note'] = note_names[i % len(note_names)]
-        pad['index'] = i
-    return sorted_ring
+    return note_pads
 
 
 def generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_ring, output_path):
@@ -277,9 +309,7 @@ def generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_r
         # Add label at centroid
         cx, cy = pad['centroid_2d']
         note = pad['note']
-        idx = pad['index']
-
-        prefix = {'inner': 'I', 'central': 'C', 'outer': 'O'}[ring_type]
+        idx = pad['index']  # Already full index like 'O0', 'C5', 'I3'
 
         # Note name with outline for visibility
         ax.text(cx, cy + 0.3, note,
@@ -289,7 +319,7 @@ def generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_r
                 path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
         # Index below
-        ax.text(cx, cy - 0.5, f"{prefix}{idx}",
+        ax.text(cx, cy - 0.5, idx,
                 ha='center', va='center',
                 fontsize=7,
                 color='#cccccc',
@@ -378,32 +408,32 @@ def main():
     note_pads = create_note_pads(objects, all_vertices)
     print(f"  Found {len(note_pads)} note pads")
 
-    print("Classifying rings...")
-    inner_ring, central_ring, outer_ring, center = classify_rings(note_pads)
+    print("Assigning notes from fixed mapping...")
+    note_pads = assign_notes_from_mapping(note_pads)
 
-    print("Assigning notes...")
-    inner_ring = assign_notes(inner_ring, INNER_NOTES)
-    central_ring = assign_notes(central_ring, CENTRAL_NOTES)
-    outer_ring = assign_notes(outer_ring, OUTER_NOTES)
+    # Separate into rings based on the assigned ring_type
+    inner_ring = [p for p in note_pads if p.get('ring_type') == 'inner']
+    central_ring = [p for p in note_pads if p.get('ring_type') == 'central']
+    outer_ring = [p for p in note_pads if p.get('ring_type') == 'outer']
+
+    print(f"  Inner: {len(inner_ring)}, Central: {len(central_ring)}, Outer: {len(outer_ring)}")
 
     print("Generating 3D-based diagram...")
     os.makedirs("docs", exist_ok=True)
     generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_ring, output_image)
 
     # Print mapping
-    mapping = generate_note_mapping(inner_ring, central_ring, outer_ring)
-
     print("\n" + "="*60)
     print("NOTE PAD MAPPING")
     print("="*60)
 
-    for ring_name in ['outer', 'central', 'inner']:
+    for ring_name, ring in [('outer', outer_ring), ('central', central_ring), ('inner', inner_ring)]:
         ring_label = {'outer': 'OUTER (4ths)', 'central': 'CENTRAL (5ths)', 'inner': 'INNER (6ths)'}
         print(f"\n{ring_label[ring_name]}:")
-        for note in mapping[ring_name]:
-            print(f"  {note['index']:4s} | {note['note']:3s} | Grove: {note['grove_obj']:12s} | Pan: {note['pan_obj']:12s} | θ={note['angle']:6.1f}°")
+        for pad in sorted(ring, key=lambda x: x['index']):
+            print(f"  {pad['index']:4s} | {pad['note']:3s} | Grove: {pad['grove']:12s} | Pan: {pad['pan']:12s}")
 
-    return mapping
+    return note_pads
 
 
 if __name__ == "__main__":
