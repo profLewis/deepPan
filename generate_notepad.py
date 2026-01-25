@@ -13,6 +13,9 @@ import math
 # Conversion factor: OBJ file is in cm, output in mm
 CM_TO_MM = 10.0
 
+# Scale factor for the pan geometry (2x to make it bigger)
+PAN_SCALE = 2.0
+
 # Thickness for the solids (mm)
 PAN_THICKNESS = 1.5       # Thickness of the pan playing surface (downward)
 GROVE_DEPTH = 1.5         # Groove thickness downward (same as pan)
@@ -131,8 +134,8 @@ def extract_object_mesh(objects, obj_name, all_vertices):
     # Create mapping from old to new indices
     index_map = {old: new for new, old in enumerate(old_indices)}
 
-    # Extract vertices (convert cm to mm)
-    vertices = all_vertices[old_indices] * CM_TO_MM
+    # Extract vertices (convert cm to mm and apply scale factor)
+    vertices = all_vertices[old_indices] * CM_TO_MM * PAN_SCALE
 
     # Re-index faces
     faces = []
