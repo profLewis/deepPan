@@ -113,11 +113,46 @@ Click to play each note:
 | I3 | C | object_70 | object_34 |
 | I4 | Eb | object_18 | object_35 |
 
+## Interactive Player
+
+Open `index.html` in a browser to play notes interactively by hovering or clicking on the pan.
+
+## Command-Line Player
+
+Play tunes from the command line with `deepPanPlay`:
+
+```bash
+# Play a scale
+./deepPanPlay "C4 D4 E4 F4 G4 A4 B4 C5"
+
+# Pipe notes
+echo "G4 G4 A4 G4 C5 B4" | ./deepPanPlay
+
+# With options
+./deepPanPlay --bpm 100 -v "C4 E4 G4 C5"
+
+# From a file
+./deepPanPlay -f melody.txt
+
+# List available notes
+./deepPanPlay --list
+```
+
+**Options:**
+- `--bpm`: Tempo in beats per minute (default: 120)
+- `--length`: Note length as fraction of beat (default: 0.5)
+- `--gap`: Gap between notes in seconds (default: 0.05)
+- `-v`: Verbose output
+- `,,` or `-` or `.`: Insert a pause
+
 ## Files
 
 - `data/Tenor Pan only.obj` - 3D model in Wavefront OBJ format (exported from Rhino)
 - `generate_diagram.py` - Python script to analyze the OBJ and generate the layout diagram
 - `generate_sounds.py` - Python script to synthesize steel pan sounds for each note
+- `generate_interactive.py` - Python script to generate the interactive HTML page
+- `index.html` - Interactive steel pan player (open in browser)
+- `deepPanPlay` - Command-line tool to play note sequences
 - `docs/tenor_pan_layout.png` - Generated diagram of the note layout (from 3D geometry)
 - `sounds/` - Synthesized WAV files for each note
 
@@ -131,6 +166,11 @@ python3 generate_diagram.py
 Generate sound files:
 ```bash
 python3 generate_sounds.py
+```
+
+Generate interactive HTML:
+```bash
+python3 generate_interactive.py
 ```
 
 ### Requirements
