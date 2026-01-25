@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+deepPanPlay - Play steel pan tunes from note sequences
+
+Usage:
+    echo "C#4 G4 G5 F5" | deepPanPlay
+    deepPanPlay "C4 E4 G4 C5"
+    deepPanPlay -f melody.txt
+    deepPanPlay --bpm 120 "C4 D4 E4 F4"
+
+Note format:
+    Note names: C, C#, D, Eb, E, F, F#, G, Ab, A, Bb, B
+    Octaves: 4 (outer), 5 (central), 6 (inner)
+    Pause: ,, or - or .
+
+Examples:
+    "C4 E4 G4 C5"           - Play C major arpeggio
+    "C4 ,, E4 ,, G4"        - Play with pauses
+    "C4 C4 G4 G4 A4 A4 G4"  - Twinkle twinkle
+
+Available notes:
+    Outer (4):  F#4, B4, E4, A4, D4, G4, C4, F4, Bb4, Eb4, Ab4, C#4
+    Central (5): F#5, B5, E5, A5, D5, G5, C5, F5, Bb5, Eb5, Ab5, C#5
+    Inner (6):  C#6, E6, D6, C6, Eb6
+"""
+
+import os
+import sys
+import argparse
+import subprocess
+import time
+from pathlib import Path
+
+# Note to file mapping
+# Maps (note_name, octave) -> filename
+NOTE_FILES = {
+    # Outer Ring (octave 4)
+    ('F#', 4): 'O0_Fs4.wav',
+    ('B', 4): 'O1_B4.wav',
+    ('E', 4): 'O2_E4.wav',
+    ('A', 4): 'O3_A4.wav',
+    ('D', 4): 'O4_D4.wav',
+    ('G', 4): 'O5_G4.wav',
+    ('C', 4): 'O6_C4.wav',
+    ('F', 4): 'O7_F4.wav',
+    ('Bb', 4): 'O8_Bb4.wav',
+    ('Eb', 4): 'O9_Eb4.wav',
+    ('Ab', 4): 'O10_Ab4.wav',
+    ('C#', 4): 'O11_Cs4.wav',
+    # Central Ring (octave 5)
+    ('F#', 5): 'C0_Fs5.wav',
+    ('B', 5): 'C1_B5.wav',
+    ('E', 5): 'C2_E5.wav',
+    ('A', 5): 'C3_A5.wav',
+    ('D', 5): 'C4_D5.wav',
+    ('G', 5): 'C5_G5.wav',
+    ('C', 5): 'C6_C5.wav',
+    ('F', 5): 'C7_F5.wav',
+    ('Bb', 5): 'C8_Bb5.wav',
+    ('Eb', 5): 'C9_Eb5.wav',
+    ('Ab', 5): 'C10_Ab5.wav',
+    ('C#', 5): 'C11_Cs5.wav',
+    # Inner Ring (octave 6)
+    ('C#', 6): 'I0_Cs6.wav',
+    ('E', 6): 'I1_E6.wav',
+    ('D', 6): 'I2_D6.wav',
+    ('C', 6): 'I3_C6.wav',
+    ('Eb', 6): 'I4_Eb6.wav',
+}
+
+# Enharmonic equivalents
+ENHARMONICS = {
+    'Db': 'C#',
+    'D#': 'Eb',
+    'Gb': 'F#',
+    'G#': 'Ab',
+    'A#': 'Bb',
+}
+
+# Pause tokens
+PAUSE_TOKENS = {',,', '-', '.', 'r', 'R', 'rest', 'REST'}
+
+
+def get_script_dir():
+    """Get the directory containing this script."""
+    return Path(__file__).parent.resolve()
+
+
+def parse_note(token):
+    """Parse a note token like 'C#4' or 'Bb5' into (note_name, octave)."""
+    token = token.strip()
+
+    if not token or token in PAUSE_TOKENS:
+        return None  # Pause
+
+    # Handle note with octave
+    if len(token) >= 2:
+        # Check for sharp/flat (2 char note name)
+        if len(token) >= 3 and token[1] in '#b':
+            note_name = token[:2]
+            octave_str = token[2:]
+        else:
+            note_name = token[0]
+            octave_str = token[1:]
+
+        # Convert enharmonics
+        if note_name in ENHARMONICS:
+            note_name = ENHARMONICS[note_name]
+
+        # Parse octave
+        try:
+            octave = int(octave_str)
+        except ValueError:
+            print(f"Warning: Invalid octave in '{token}', skipping", file=sys.stderr)
+            return 'skip'
+
+        return (note_name, octave)
+
+    return 'skip'
+
+
+def play_sound(filepath, duration=None):
+    """Play a sound file using system audio player."""
+    if sys.platform == 'darwin':  # macOS
+        cmd = ['afplay', str(filepath)]
+        if duration:
+            cmd.extend(['-t', str(duration)])
+        subprocess.run(cmd, check=True)
+    elif sys.platform.startswith('linux'):
+        # Try aplay (ALSA) or paplay (PulseAudio)
+        try:
+            subprocess.run(['aplay', '-q', str(filepath)], check=True)
+        except FileNotFoundError:
+            subprocess.run(['paplay', str(filepath)], check=True)
+    elif sys.platform == 'win32':
+        # Use PowerShell on Windows
+        ps_cmd = f'(New-Object Media.SoundPlayer "{filepath}").PlaySync()'
+        subprocess.run(['powershell', '-c', ps_cmd], check=True)
+    else:
+        print(f"Warning: Unknown platform {sys.platform}", file=sys.stderr)
+
+
+def play_sequence(notes, sounds_dir, bpm=120, note_length=0.5, gap=0.05, verbose=False):
+    """Play a sequence of notes.
+
+    Args:
+        notes: List of note tokens (strings)
+        sounds_dir: Directory containing WAV files
+        bpm: Beats per minute
+        note_length: Note length as fraction of beat (0.5 = eighth note)
+        gap: Gap between notes in seconds
+        verbose: Print each note as it plays
+    """
+    beat_duration = 60.0 / bpm
+    note_duration = beat_duration * note_length
+    pause_duration = beat_duration * note_length
+
+    for token in notes:
+        parsed = parse_note(token)
+
+        if parsed is None:  # Pause
+            if verbose:
+                print("  (pause)")
+            time.sleep(pause_duration)
+            continue
+
+        if parsed == 'skip':
+            continue
+
+        note_name, octave = parsed
+        key = (note_name, octave)
+
+        if key not in NOTE_FILES:
+            print(f"Warning: Note {note_name}{octave} not available on tenor pan, skipping",
+                  file=sys.stderr)
+            continue
+
+        filename = NOTE_FILES[key]
+        filepath = sounds_dir / filename
+
+        if not filepath.exists():
+            print(f"Warning: Sound file not found: {filepath}", file=sys.stderr)
+            continue
+
+        if verbose:
+            print(f"  {note_name}{octave}")
+
+        # Play note (non-blocking would be better but this is simpler)
+        try:
+            play_sound(filepath, duration=note_duration)
+        except Exception as e:
+            print(f"Error playing {filename}: {e}", file=sys.stderr)
+
+        # Small gap between notes
+        if gap > 0:
+            time.sleep(gap)
+
+
+def parse_input(text):
+    """Parse input text into list of note tokens."""
+    # Replace commas with spaces, but preserve ,, as pause
+    text = text.replace(',,', ' ,, ')
+    # Split on whitespace and commas
+    tokens = []
+    for part in text.replace(',', ' ').split():
+        part = part.strip()
+        if part:
+            tokens.append(part)
+    return tokens
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Play steel pan tunes from note sequences',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    parser.add_argument('notes', nargs='*', help='Notes to play (or pipe via stdin)')
+    parser.add_argument('-f', '--file', help='Read notes from file')
+    parser.add_argument('--bpm', type=int, default=120, help='Tempo in BPM (default: 120)')
+    parser.add_argument('--length', type=float, default=0.5,
+                        help='Note length as fraction of beat (default: 0.5)')
+    parser.add_argument('--gap', type=float, default=0.05,
+                        help='Gap between notes in seconds (default: 0.05)')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Print each note as it plays')
+    parser.add_argument('--list', action='store_true',
+                        help='List all available notes')
+    parser.add_argument('--sounds-dir', type=Path,
+                        help='Directory containing sound files')
+
+    args = parser.parse_args()
+
+    # Determine sounds directory
+    if args.sounds_dir:
+        sounds_dir = args.sounds_dir
+    else:
+        sounds_dir = get_script_dir() / 'sounds'
+
+    if not sounds_dir.exists():
+        print(f"Error: Sounds directory not found: {sounds_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    # List available notes
+    if args.list:
+        print("Available notes on the tenor steel pan:\n")
+        print("Outer Ring (octave 4):")
+        outer = [f"  {n}{o}" for (n, o) in NOTE_FILES.keys() if o == 4]
+        print("  " + ", ".join(f"{n}{o}" for (n, o) in NOTE_FILES.keys() if o == 4))
+        print("\nCentral Ring (octave 5):")
+        print("  " + ", ".join(f"{n}{o}" for (n, o) in NOTE_FILES.keys() if o == 5))
+        print("\nInner Ring (octave 6):")
+        print("  " + ", ".join(f"{n}{o}" for (n, o) in NOTE_FILES.keys() if o == 6))
+        print("\nPause tokens: ,, - . r rest")
+        sys.exit(0)
+
+    # Get input notes
+    if args.file:
+        with open(args.file) as f:
+            input_text = f.read()
+    elif args.notes:
+        input_text = ' '.join(args.notes)
+    elif not sys.stdin.isatty():
+        input_text = sys.stdin.read()
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+    notes = parse_input(input_text)
+
+    if not notes:
+        print("No notes to play", file=sys.stderr)
+        sys.exit(1)
+
+    if args.verbose:
+        print(f"Playing {len(notes)} notes at {args.bpm} BPM...")
+
+    play_sequence(notes, sounds_dir,
+                  bpm=args.bpm,
+                  note_length=args.length,
+                  gap=args.gap,
+                  verbose=args.verbose)
+
+
+if __name__ == '__main__':
+    main()
