@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
 Generate a labeled diagram of the tenor pan from OBJ file data.
+Projects the actual 3D geometry onto the rim plane (top-down view).
 """
 
 import math
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.patches import Ellipse
-import numpy as np
+from matplotlib.collections import PolyCollection
+from matplotlib.path import Path
+import matplotlib.patheffects as pe
 
 # Note assignments for each ring
 OUTER_NOTES = ['F#', 'B', 'E', 'A', 'D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab', 'C#']  # 4ths
 CENTRAL_NOTES = ['F#', 'B', 'E', 'A', 'D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab', 'C#']  # 5ths
 INNER_NOTES = ['C#', 'E', 'D', 'C', 'Eb']  # 6ths
 
+
 def parse_obj_file(filepath):
-    """Parse OBJ file and extract note pad positions."""
+    """Parse OBJ file and extract geometry."""
     objects = {}
     current_object = None
     current_material = None
@@ -32,55 +36,103 @@ def parse_obj_file(filepath):
             current_object = line[2:]
         elif line.startswith('usemtl '):
             current_material = line[7:]
-            if current_object and current_material in ['Groves', 'Pan']:
-                objects[current_object] = {'material': current_material, 'face_vertices': set()}
+            if current_object:
+                objects[current_object] = {
+                    'material': current_material,
+                    'face_vertices': set(),
+                    'faces': []
+                }
         elif line.startswith('v '):
             parts = line.split()
             x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
             all_vertices.append((x, y, z))
         elif line.startswith('f ') and current_object in objects:
             parts = line.split()[1:]
+            face_verts = []
             for p in parts:
                 try:
                     v_idx = int(p.split('/')[0]) - 1
                     objects[current_object]['face_vertices'].add(v_idx)
+                    face_verts.append(v_idx)
                 except ValueError:
                     continue
+            if face_verts:
+                objects[current_object]['faces'].append(face_verts)
 
-    return objects, all_vertices
+    return objects, np.array(all_vertices)
 
 
-def get_centroid(objects, obj_name, all_vertices):
-    """Calculate centroid of an object."""
+def get_object_boundary(objects, obj_name, all_vertices):
+    """Get the 2D boundary of an object projected onto X-Z plane."""
     obj = objects[obj_name]
-    face_vertices = obj['face_vertices']
-    if not face_vertices:
-        return None
-    xs, ys, zs = [], [], []
-    for idx in face_vertices:
-        if 0 <= idx < len(all_vertices):
-            x, y, z = all_vertices[idx]
-            xs.append(x)
-            ys.append(y)
-            zs.append(z)
-    if not xs:
-        return None
-    return (sum(xs)/len(xs), sum(ys)/len(ys), sum(zs)/len(zs))
+    indices = list(obj['face_vertices'])
+    if not indices:
+        return None, None
+
+    verts = all_vertices[indices]
+    # Project to X-Z plane (top-down view, Y is vertical)
+    points_2d = verts[:, [0, 2]]  # X and Z coordinates
+
+    # Calculate centroid
+    centroid = points_2d.mean(axis=0)
+
+    return points_2d, centroid
 
 
-def distance(c1, c2):
-    """Calculate 3D distance between two points."""
+def get_object_faces_2d(objects, obj_name, all_vertices):
+    """Get all faces of an object projected to 2D (X-Z plane)."""
+    obj = objects[obj_name]
+    faces_2d = []
+
+    for face in obj['faces']:
+        if len(face) >= 3:
+            face_verts = all_vertices[face]
+            # Project to X-Z plane
+            face_2d = face_verts[:, [0, 2]]
+            faces_2d.append(face_2d)
+
+    return faces_2d
+
+
+def get_convex_hull(points):
+    """Get convex hull of 2D points."""
+    from scipy.spatial import ConvexHull
+    if len(points) < 3:
+        return points
+    try:
+        hull = ConvexHull(points)
+        return points[hull.vertices]
+    except:
+        return points
+
+
+def distance_3d(c1, c2):
+    """Calculate 3D distance."""
     return math.sqrt((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2 + (c1[2]-c2[2])**2)
+
+
+def get_centroid_3d(objects, obj_name, all_vertices):
+    """Get 3D centroid of an object."""
+    obj = objects[obj_name]
+    indices = list(obj['face_vertices'])
+    if not indices:
+        return None
+    verts = all_vertices[indices]
+    return verts.mean(axis=0)
 
 
 def create_note_pads(objects, all_vertices):
     """Match Groves and Pan objects to create note pads."""
-    groves = [(name, get_centroid(objects, name, all_vertices))
-              for name, obj in objects.items()
-              if obj['material'] == 'Groves' and get_centroid(objects, name, all_vertices)]
-    pans = [(name, get_centroid(objects, name, all_vertices))
-            for name, obj in objects.items()
-            if obj['material'] == 'Pan' and get_centroid(objects, name, all_vertices)]
+    groves = []
+    pans = []
+
+    for name, obj in objects.items():
+        centroid = get_centroid_3d(objects, name, all_vertices)
+        if centroid is not None:
+            if obj['material'] == 'Groves':
+                groves.append((name, centroid))
+            elif obj['material'] == 'Pan':
+                pans.append((name, centroid))
 
     note_pads = []
     used_pans = set()
@@ -91,20 +143,21 @@ def create_note_pads(objects, all_vertices):
         for pan_name, pan_centroid in pans:
             if pan_name in used_pans:
                 continue
-            d = distance(grove_centroid, pan_centroid)
+            d = distance_3d(grove_centroid, pan_centroid)
             if d < best_dist:
                 best_dist = d
                 best_pan = (pan_name, pan_centroid)
         if best_pan and best_dist < 15:
-            combined_centroid = (
+            # Get 2D projection centroid (X-Z plane)
+            combined_centroid_2d = np.array([
                 (grove_centroid[0] + best_pan[1][0]) / 2,
-                (grove_centroid[1] + best_pan[1][1]) / 2,
-                (grove_centroid[2] + best_pan[1][2]) / 2
-            )
+                (grove_centroid[2] + best_pan[1][2]) / 2  # Z becomes Y in 2D
+            ])
             note_pads.append({
                 'grove': grove_name,
                 'pan': best_pan[0],
-                'centroid': combined_centroid
+                'centroid_2d': combined_centroid_2d,
+                'centroid_3d': (grove_centroid + best_pan[1]) / 2
             })
             used_pans.add(best_pan[0])
 
@@ -113,18 +166,15 @@ def create_note_pads(objects, all_vertices):
 
 def classify_rings(note_pads):
     """Classify note pads into inner, central, and outer rings."""
-    # Calculate pan center
-    center_x = sum(np['centroid'][0] for np in note_pads) / len(note_pads)
-    center_y = sum(np['centroid'][1] for np in note_pads) / len(note_pads)
+    # Calculate pan center in 2D
+    centroids = np.array([pad['centroid_2d'] for pad in note_pads])
+    center = centroids.mean(axis=0)
 
-    # Calculate radius and angle for each note pad
-    for np in note_pads:
-        dx = np['centroid'][0] - center_x
-        dy = np['centroid'][1] - center_y
-        np['radius'] = math.sqrt(dx**2 + dy**2)
-        np['angle'] = math.degrees(math.atan2(dy, dx))
-        np['x'] = dx  # Relative to center
-        np['y'] = dy
+    for pad in note_pads:
+        dx = pad['centroid_2d'][0] - center[0]
+        dy = pad['centroid_2d'][1] - center[1]
+        pad['radius'] = math.sqrt(dx**2 + dy**2)
+        pad['angle'] = math.degrees(math.atan2(dy, dx))
 
     # Sort by radius and classify
     note_pads.sort(key=lambda x: x['radius'])
@@ -133,116 +183,148 @@ def classify_rings(note_pads):
     central_ring = note_pads[5:17]
     outer_ring = note_pads[17:]
 
-    return inner_ring, central_ring, outer_ring, (center_x, center_y)
+    return inner_ring, central_ring, outer_ring, center
 
 
 def assign_notes(ring, note_names):
     """Assign note names to pads in a ring based on angular position."""
-    # Sort by angle (starting from a reference point)
     sorted_ring = sorted(ring, key=lambda x: x['angle'])
-
     for i, pad in enumerate(sorted_ring):
         pad['note'] = note_names[i % len(note_names)]
         pad['index'] = i
-
     return sorted_ring
 
 
-def generate_diagram(inner_ring, central_ring, outer_ring, output_path):
-    """Generate a top-down diagram of the pan."""
+def generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_ring, output_path):
+    """Generate a top-down diagram using actual 3D geometry."""
+
     fig, ax = plt.subplots(1, 1, figsize=(14, 14))
 
-    # Set up the plot
-    ax.set_aspect('equal')
-    ax.set_xlim(-14, 14)
-    ax.set_ylim(-14, 14)
-    ax.set_facecolor('#2a2a2a')
-    fig.patch.set_facecolor('#1a1a1a')
+    # Dark background
+    ax.set_facecolor('#1a1a1a')
+    fig.patch.set_facecolor('#0d0d0d')
 
-    # Draw pan outline (outer circle)
-    pan_circle = plt.Circle((0, 0), 12, fill=False, color='#888888', linewidth=3)
-    ax.add_patch(pan_circle)
-
-    # Color schemes for each ring
+    # Color schemes
     colors = {
-        'outer': '#e74c3c',    # Red
-        'central': '#3498db',  # Blue
-        'inner': '#2ecc71'     # Green
+        'outer': '#c0392b',     # Dark red
+        'central': '#2471a3',   # Dark blue
+        'inner': '#1e8449',     # Dark green
+        'grove': '#2c3e50',     # Dark gray for grooves
+        'rim': '#7f8c8d'        # Gray for rim
     }
 
-    def draw_note_pad(pad, ring_type, ring_index):
-        """Draw a single note pad."""
-        x, y = pad['x'], pad['y']
+    highlight_colors = {
+        'outer': '#e74c3c',     # Bright red
+        'central': '#3498db',   # Bright blue
+        'inner': '#2ecc71',     # Bright green
+    }
+
+    # Draw the rim circle
+    # Find rim by getting max radius of pan/groves vertices
+    pan_grove_verts = []
+    for name, obj in objects.items():
+        if obj['material'] in ['Pan', 'Groves']:
+            for idx in obj['face_vertices']:
+                pan_grove_verts.append(all_vertices[idx])
+    pan_grove_verts = np.array(pan_grove_verts)
+
+    center_x = pan_grove_verts[:, 0].mean()
+    center_z = pan_grove_verts[:, 2].mean()
+
+    radii = np.sqrt((pan_grove_verts[:,0] - center_x)**2 + (pan_grove_verts[:,2] - center_z)**2)
+    rim_radius = radii.max() * 1.05  # Slightly larger than max
+
+    rim_circle = plt.Circle((center_x, center_z), rim_radius,
+                             fill=False, color=colors['rim'], linewidth=3)
+    ax.add_patch(rim_circle)
+
+    # Draw each note pad using actual geometry
+    def draw_note_pad_geometry(pad, ring_type):
+        pan_name = pad['pan']
+        grove_name = pad['grove']
+
+        # Get faces for the pan object
+        pan_faces = get_object_faces_2d(objects, pan_name, all_vertices)
+        grove_faces = get_object_faces_2d(objects, grove_name, all_vertices)
+
+        # Draw grove faces (darker)
+        for face in grove_faces:
+            if len(face) >= 3:
+                poly = plt.Polygon(face, facecolor=colors['grove'],
+                                  edgecolor='none', alpha=0.7)
+                ax.add_patch(poly)
+
+        # Draw pan faces (colored by ring)
+        for face in pan_faces:
+            if len(face) >= 3:
+                poly = plt.Polygon(face, facecolor=colors[ring_type],
+                                  edgecolor=highlight_colors[ring_type],
+                                  linewidth=0.5, alpha=0.85)
+                ax.add_patch(poly)
+
+        # Add label at centroid
+        cx, cy = pad['centroid_2d']
         note = pad['note']
         idx = pad['index']
 
-        # Pad size varies by ring
-        if ring_type == 'inner':
-            size = 1.8
-            prefix = 'I'
-        elif ring_type == 'central':
-            size = 1.5
-            prefix = 'C'
-        else:
-            size = 1.3
-            prefix = 'O'
+        prefix = {'inner': 'I', 'central': 'C', 'outer': 'O'}[ring_type]
 
-        # Draw ellipse for the note pad
-        ellipse = Ellipse((x, y), size * 1.2, size,
-                         facecolor=colors[ring_type],
-                         edgecolor='white',
-                         linewidth=2,
-                         alpha=0.8)
-        ax.add_patch(ellipse)
-
-        # Add note name
-        ax.text(x, y + 0.15, note,
+        # Note name with outline for visibility
+        ax.text(cx, cy + 0.3, note,
                 ha='center', va='center',
-                fontsize=11, fontweight='bold',
-                color='white')
+                fontsize=10, fontweight='bold',
+                color='white',
+                path_effects=[pe.withStroke(linewidth=2, foreground='black')])
 
-        # Add index identifier
-        index_label = f"{prefix}{idx}"
-        ax.text(x, y - 0.35, index_label,
+        # Index below
+        ax.text(cx, cy - 0.5, f"{prefix}{idx}",
                 ha='center', va='center',
-                fontsize=8,
-                color='#cccccc')
+                fontsize=7,
+                color='#cccccc',
+                path_effects=[pe.withStroke(linewidth=1, foreground='black')])
 
     # Draw all note pads
     for pad in outer_ring:
-        draw_note_pad(pad, 'outer', pad['index'])
-
+        draw_note_pad_geometry(pad, 'outer')
     for pad in central_ring:
-        draw_note_pad(pad, 'central', pad['index'])
-
+        draw_note_pad_geometry(pad, 'central')
     for pad in inner_ring:
-        draw_note_pad(pad, 'inner', pad['index'])
+        draw_note_pad_geometry(pad, 'inner')
 
-    # Add title
-    ax.set_title('Tenor Pan Note Layout\n(View from Above)',
+    # Set axis limits with padding
+    padding = 2
+    ax.set_xlim(center_x - rim_radius - padding, center_x + rim_radius + padding)
+    ax.set_ylim(center_z - rim_radius - padding, center_z + rim_radius + padding)
+    ax.set_aspect('equal')
+
+    # Title
+    ax.set_title('Tenor Pan Note Layout\n(Top-Down View from 3D Model)',
                  fontsize=18, fontweight='bold', color='white', pad=20)
 
-    # Add legend
+    # Legend
     legend_elements = [
-        patches.Patch(facecolor=colors['outer'], edgecolor='white', label=f'Outer Ring (4ths) - 12 notes'),
-        patches.Patch(facecolor=colors['central'], edgecolor='white', label=f'Central Ring (5ths) - 12 notes'),
-        patches.Patch(facecolor=colors['inner'], edgecolor='white', label=f'Inner Ring (6ths) - 5 notes'),
+        patches.Patch(facecolor=highlight_colors['outer'], edgecolor='white',
+                     label='Outer Ring (4ths) - 12 notes'),
+        patches.Patch(facecolor=highlight_colors['central'], edgecolor='white',
+                     label='Central Ring (5ths) - 12 notes'),
+        patches.Patch(facecolor=highlight_colors['inner'], edgecolor='white',
+                     label='Inner Ring (6ths) - 5 notes'),
     ]
-    ax.legend(handles=legend_elements, loc='upper left',
-              facecolor='#333333', edgecolor='white', labelcolor='white',
-              fontsize=10)
+    legend = ax.legend(handles=legend_elements, loc='upper left',
+                       facecolor='#333333', edgecolor='white', labelcolor='white',
+                       fontsize=10)
+    legend.get_frame().set_alpha(0.9)
 
-    # Add ring labels
-    ax.text(0, -13, 'Index format: O=Outer, C=Central, I=Inner',
+    # Index format note
+    ax.text(center_x, center_z - rim_radius - 1,
+            'Index: O=Outer, C=Central, I=Inner',
             ha='center', va='center', fontsize=10, color='#888888')
 
     # Remove axes
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, facecolor=fig.get_facecolor(),
@@ -254,46 +336,26 @@ def generate_diagram(inner_ring, central_ring, outer_ring, output_path):
 
 def generate_note_mapping(inner_ring, central_ring, outer_ring):
     """Generate a mapping dictionary for all notes."""
-    mapping = {
-        'inner': [],
-        'central': [],
-        'outer': []
-    }
+    mapping = {'inner': [], 'central': [], 'outer': []}
 
-    for pad in inner_ring:
-        mapping['inner'].append({
-            'index': f"I{pad['index']}",
-            'note': pad['note'],
-            'grove_obj': pad['grove'],
-            'pan_obj': pad['pan'],
-            'angle': round(pad['angle'], 1),
-            'radius': round(pad['radius'], 2)
-        })
-
-    for pad in central_ring:
-        mapping['central'].append({
-            'index': f"C{pad['index']}",
-            'note': pad['note'],
-            'grove_obj': pad['grove'],
-            'pan_obj': pad['pan'],
-            'angle': round(pad['angle'], 1),
-            'radius': round(pad['radius'], 2)
-        })
-
-    for pad in outer_ring:
-        mapping['outer'].append({
-            'index': f"O{pad['index']}",
-            'note': pad['note'],
-            'grove_obj': pad['grove'],
-            'pan_obj': pad['pan'],
-            'angle': round(pad['angle'], 1),
-            'radius': round(pad['radius'], 2)
-        })
+    for ring_name, ring in [('inner', inner_ring), ('central', central_ring), ('outer', outer_ring)]:
+        prefix = {'inner': 'I', 'central': 'C', 'outer': 'O'}[ring_name]
+        for pad in ring:
+            mapping[ring_name].append({
+                'index': f"{prefix}{pad['index']}",
+                'note': pad['note'],
+                'grove_obj': pad['grove'],
+                'pan_obj': pad['pan'],
+                'angle': round(pad['angle'], 1),
+                'radius': round(pad['radius'], 2)
+            })
 
     return mapping
 
 
 def main():
+    import os
+
     obj_path = "data/Tenor Pan only.obj"
     output_image = "docs/tenor_pan_layout.png"
 
@@ -302,6 +364,7 @@ def main():
 
     print("Creating note pads...")
     note_pads = create_note_pads(objects, all_vertices)
+    print(f"  Found {len(note_pads)} note pads")
 
     print("Classifying rings...")
     inner_ring, central_ring, outer_ring, center = classify_rings(note_pads)
@@ -311,10 +374,9 @@ def main():
     central_ring = assign_notes(central_ring, CENTRAL_NOTES)
     outer_ring = assign_notes(outer_ring, OUTER_NOTES)
 
-    print("Generating diagram...")
-    import os
+    print("Generating 3D-based diagram...")
     os.makedirs("docs", exist_ok=True)
-    generate_diagram(inner_ring, central_ring, outer_ring, output_image)
+    generate_3d_diagram(objects, all_vertices, inner_ring, central_ring, outer_ring, output_image)
 
     # Print mapping
     mapping = generate_note_mapping(inner_ring, central_ring, outer_ring)
