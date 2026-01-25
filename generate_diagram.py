@@ -14,8 +14,9 @@ import matplotlib.patheffects as pe
 
 # Fixed note mapping based on 3D object names
 # Maps (grove_object, pan_object) -> (index, note, ring_type)
+# Outer: O0 at top (~90°), Central: C0 at top (~92°), Inner: I0 at top (~110°)
 NOTE_MAPPING = {
-    # Outer Ring (4ths)
+    # Outer Ring (4ths) - unchanged
     ('object_58', 'object_62'): ('O0', 'Bb', 'outer'),
     ('object_57', 'object_63'): ('O1', 'F', 'outer'),
     ('object_56', 'object_64'): ('O2', 'C', 'outer'),
@@ -28,25 +29,25 @@ NOTE_MAPPING = {
     ('object_50', 'object_88'): ('O9', 'C#', 'outer'),
     ('object_49', 'object_68'): ('O10', 'Ab', 'outer'),
     ('object_48', 'object_69'): ('O11', 'Eb', 'outer'),
-    # Central Ring (5ths)
-    ('object_24', 'object_46'): ('C0', 'Ab', 'central'),
-    ('object_23', 'object_47'): ('C1', 'Eb', 'central'),
-    ('object_22', 'object_37'): ('C2', 'Bb', 'central'),
-    ('object_21', 'object_38'): ('C3', 'F', 'central'),
-    ('object_20', 'object_39'): ('C4', 'C', 'central'),
-    ('object_73', 'object_31'): ('C5', 'G', 'central'),
-    ('object_30', 'object_40'): ('C6', 'D', 'central'),
-    ('object_29', 'object_41'): ('C7', 'A', 'central'),
-    ('object_28', 'object_42'): ('C8', 'E', 'central'),
-    ('object_27', 'object_43'): ('C9', 'B', 'central'),
-    ('object_26', 'object_44'): ('C10', 'F#', 'central'),
-    ('object_25', 'object_45'): ('C11', 'C#', 'central'),
-    # Inner Ring (6ths)
-    ('object_71', 'object_32'): ('I0', 'C', 'inner'),
-    ('object_19', 'object_33'): ('I1', 'E', 'inner'),
-    ('object_70', 'object_34'): ('I2', 'D', 'inner'),
-    ('object_18', 'object_35'): ('I3', 'C#', 'inner'),
-    ('object_72', 'object_36'): ('I4', 'Eb', 'inner'),
+    # Central Ring (5ths) - rotated 1 anti-clockwise
+    ('object_25', 'object_45'): ('C0', 'C#', 'central'),
+    ('object_24', 'object_46'): ('C1', 'Ab', 'central'),
+    ('object_23', 'object_47'): ('C2', 'Eb', 'central'),
+    ('object_22', 'object_37'): ('C3', 'Bb', 'central'),
+    ('object_21', 'object_38'): ('C4', 'F', 'central'),
+    ('object_20', 'object_39'): ('C5', 'C', 'central'),
+    ('object_73', 'object_31'): ('C6', 'G', 'central'),
+    ('object_30', 'object_40'): ('C7', 'D', 'central'),
+    ('object_29', 'object_41'): ('C8', 'A', 'central'),
+    ('object_28', 'object_42'): ('C9', 'E', 'central'),
+    ('object_27', 'object_43'): ('C10', 'B', 'central'),
+    ('object_26', 'object_44'): ('C11', 'F#', 'central'),
+    # Inner Ring (6ths) - rotated 1 anti-clockwise
+    ('object_72', 'object_36'): ('I0', 'Eb', 'inner'),
+    ('object_71', 'object_32'): ('I1', 'C', 'inner'),
+    ('object_19', 'object_33'): ('I2', 'E', 'inner'),
+    ('object_70', 'object_34'): ('I3', 'D', 'inner'),
+    ('object_18', 'object_35'): ('I4', 'C#', 'inner'),
 }
 
 

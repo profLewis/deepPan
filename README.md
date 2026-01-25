@@ -30,28 +30,28 @@ Click to play each note:
 
 | Index | Note | Sound |
 |-------|------|-------|
-| I0 | C6 | [I0_C6.wav](sounds/I0_C6.wav) |
-| I1 | E6 | [I1_E6.wav](sounds/I1_E6.wav) |
-| I2 | D6 | [I2_D6.wav](sounds/I2_D6.wav) |
-| I3 | C#6 | [I3_Cs6.wav](sounds/I3_Cs6.wav) |
-| I4 | Eb6 | [I4_Eb6.wav](sounds/I4_Eb6.wav) |
+| I0 | Eb6 | [I0_Eb6.wav](sounds/I0_Eb6.wav) |
+| I1 | C6 | [I1_C6.wav](sounds/I1_C6.wav) |
+| I2 | E6 | [I2_E6.wav](sounds/I2_E6.wav) |
+| I3 | D6 | [I3_D6.wav](sounds/I3_D6.wav) |
+| I4 | C#6 | [I4_Cs6.wav](sounds/I4_Cs6.wav) |
 
 ### Central Ring (5ths) - 12 notes
 
 | Index | Note | Sound |
 |-------|------|-------|
-| C0 | Ab5 | [C0_Ab5.wav](sounds/C0_Ab5.wav) |
-| C1 | Eb5 | [C1_Eb5.wav](sounds/C1_Eb5.wav) |
-| C2 | Bb5 | [C2_Bb5.wav](sounds/C2_Bb5.wav) |
-| C3 | F5 | [C3_F5.wav](sounds/C3_F5.wav) |
-| C4 | C5 | [C4_C5.wav](sounds/C4_C5.wav) |
-| C5 | G5 | [C5_G5.wav](sounds/C5_G5.wav) |
-| C6 | D5 | [C6_D5.wav](sounds/C6_D5.wav) |
-| C7 | A5 | [C7_A5.wav](sounds/C7_A5.wav) |
-| C8 | E5 | [C8_E5.wav](sounds/C8_E5.wav) |
-| C9 | B5 | [C9_B5.wav](sounds/C9_B5.wav) |
-| C10 | F#5 | [C10_Fs5.wav](sounds/C10_Fs5.wav) |
-| C11 | C#5 | [C11_Cs5.wav](sounds/C11_Cs5.wav) |
+| C0 | C#5 | [C0_Cs5.wav](sounds/C0_Cs5.wav) |
+| C1 | Ab5 | [C1_Ab5.wav](sounds/C1_Ab5.wav) |
+| C2 | Eb5 | [C2_Eb5.wav](sounds/C2_Eb5.wav) |
+| C3 | Bb5 | [C3_Bb5.wav](sounds/C3_Bb5.wav) |
+| C4 | F5 | [C4_F5.wav](sounds/C4_F5.wav) |
+| C5 | C5 | [C5_C5.wav](sounds/C5_C5.wav) |
+| C6 | G5 | [C6_G5.wav](sounds/C6_G5.wav) |
+| C7 | D5 | [C7_D5.wav](sounds/C7_D5.wav) |
+| C8 | A5 | [C8_A5.wav](sounds/C8_A5.wav) |
+| C9 | E5 | [C9_E5.wav](sounds/C9_E5.wav) |
+| C10 | B5 | [C10_B5.wav](sounds/C10_B5.wav) |
+| C11 | F#5 | [C11_Fs5.wav](sounds/C11_Fs5.wav) |
 
 ### Outer Ring (4ths) - 12 notes
 
@@ -73,45 +73,45 @@ Click to play each note:
 ## 3D Model Object Mapping
 
 ### Outer Ring (4ths)
-| Index | Note | Grove Object | Pan Object | Angle |
-|-------|------|--------------|------------|-------|
-| O0 | Bb | object_58 | object_62 | 90° |
-| O1 | F | object_57 | object_63 | 61° |
-| O2 | C | object_56 | object_64 | 31° |
-| O3 | G | object_55 | object_90 | 3° |
-| O4 | D | object_54 | object_65 | -26° |
-| O5 | A | object_53 | object_66 | -57° |
-| O6 | E | object_59 | object_60 | -90° |
-| O7 | B | object_52 | object_61 | -123° |
-| O8 | F# | object_51 | object_67 | -154° |
-| O9 | C# | object_50 | object_88 | 177° |
-| O10 | Ab | object_49 | object_68 | 147° |
-| O11 | Eb | object_48 | object_69 | 119° |
+| Index | Note | Grove Object | Pan Object |
+|-------|------|--------------|------------|
+| O0 | Bb | object_58 | object_62 |
+| O1 | F | object_57 | object_63 |
+| O2 | C | object_56 | object_64 |
+| O3 | G | object_55 | object_90 |
+| O4 | D | object_54 | object_65 |
+| O5 | A | object_53 | object_66 |
+| O6 | E | object_59 | object_60 |
+| O7 | B | object_52 | object_61 |
+| O8 | F# | object_51 | object_67 |
+| O9 | C# | object_50 | object_88 |
+| O10 | Ab | object_49 | object_68 |
+| O11 | Eb | object_48 | object_69 |
 
 ### Central Ring (5ths)
-| Index | Note | Grove Object | Pan Object | Angle |
-|-------|------|--------------|------------|-------|
-| C0 | Ab | object_24 | object_46 | 55° |
-| C1 | Eb | object_23 | object_47 | 21° |
-| C2 | Bb | object_22 | object_37 | -7° |
-| C3 | F | object_21 | object_38 | -37° |
-| C4 | C | object_20 | object_39 | -61° |
-| C5 | G | object_73 | object_31 | -85° |
-| C6 | D | object_30 | object_40 | -117° |
-| C7 | A | object_29 | object_41 | -148° |
-| C8 | E | object_28 | object_42 | -176° |
-| C9 | B | object_27 | object_43 | 156° |
-| C10 | F# | object_26 | object_44 | 129° |
-| C11 | C# | object_25 | object_45 | 92° |
+| Index | Note | Grove Object | Pan Object |
+|-------|------|--------------|------------|
+| C0 | C# | object_25 | object_45 |
+| C1 | Ab | object_24 | object_46 |
+| C2 | Eb | object_23 | object_47 |
+| C3 | Bb | object_22 | object_37 |
+| C4 | F | object_21 | object_38 |
+| C5 | C | object_20 | object_39 |
+| C6 | G | object_73 | object_31 |
+| C7 | D | object_30 | object_40 |
+| C8 | A | object_29 | object_41 |
+| C9 | E | object_28 | object_42 |
+| C10 | B | object_27 | object_43 |
+| C11 | F# | object_26 | object_44 |
 
 ### Inner Ring (6ths)
-| Index | Note | Grove Object | Pan Object | Angle |
-|-------|------|--------------|------------|-------|
-| I0 | C | object_71 | object_32 | -4° |
-| I1 | E | object_19 | object_33 | -57° |
-| I2 | D | object_70 | object_34 | -120° |
-| I3 | C# | object_18 | object_35 | 165° |
-| I4 | Eb | object_72 | object_36 | 110° |
+| Index | Note | Grove Object | Pan Object |
+|-------|------|--------------|------------|
+| I0 | Eb | object_72 | object_36 |
+| I1 | C | object_71 | object_32 |
+| I2 | E | object_19 | object_33 |
+| I3 | D | object_70 | object_34 |
+| I4 | C# | object_18 | object_35 |
 
 ## Files
 
