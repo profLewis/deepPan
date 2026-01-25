@@ -6,7 +6,7 @@
 
 ![Tenor Pan Note Layout](docs/tenor_pan_layout.png)
 
-*Top-down view projected from the 3D model geometry*
+*Top-down view projected from the 3D model geometry. Notes arranged clockwise from 12 o'clock.*
 
 ## Note Pad Structure
 
@@ -72,46 +72,48 @@ Click to play each note:
 
 ## 3D Model Object Mapping
 
+Notes are indexed clockwise from 12 o'clock (top of pan).
+
 ### Outer Ring (4ths)
-| Index | Note | Grove Object | Pan Object |
-|-------|------|--------------|------------|
-| O0 | F# | object_51 | object_67 |
-| O1 | B | object_52 | object_61 |
-| O2 | E | object_59 | object_60 |
-| O3 | A | object_53 | object_66 |
-| O4 | D | object_54 | object_65 |
-| O5 | G | object_55 | object_90 |
-| O6 | C | object_56 | object_64 |
-| O7 | F | object_57 | object_63 |
-| O8 | Bb | object_58 | object_62 |
-| O9 | Eb | object_48 | object_69 |
-| O10 | Ab | object_49 | object_68 |
-| O11 | C# | object_50 | object_88 |
+| Index | Note | Grove Object | Pan Object | Angle |
+|-------|------|--------------|------------|-------|
+| O0 | F# | object_58 | object_62 | 90° |
+| O1 | B | object_57 | object_63 | 61° |
+| O2 | E | object_56 | object_64 | 31° |
+| O3 | A | object_55 | object_90 | 3° |
+| O4 | D | object_54 | object_65 | -26° |
+| O5 | G | object_53 | object_66 | -57° |
+| O6 | C | object_59 | object_60 | -90° |
+| O7 | F | object_52 | object_61 | -123° |
+| O8 | Bb | object_51 | object_67 | -154° |
+| O9 | Eb | object_50 | object_88 | 177° |
+| O10 | Ab | object_49 | object_68 | 147° |
+| O11 | C# | object_48 | object_69 | 119° |
 
 ### Central Ring (5ths)
-| Index | Note | Grove Object | Pan Object |
-|-------|------|--------------|------------|
-| C0 | F# | object_28 | object_42 |
-| C1 | B | object_29 | object_41 |
-| C2 | E | object_30 | object_40 |
-| C3 | A | object_73 | object_31 |
-| C4 | D | object_20 | object_39 |
-| C5 | G | object_21 | object_38 |
-| C6 | C | object_22 | object_37 |
-| C7 | F | object_23 | object_47 |
-| C8 | Bb | object_24 | object_46 |
-| C9 | Eb | object_25 | object_45 |
-| C10 | Ab | object_26 | object_44 |
-| C11 | C# | object_27 | object_43 |
+| Index | Note | Grove Object | Pan Object | Angle |
+|-------|------|--------------|------------|-------|
+| C0 | F# | object_24 | object_46 | 55° |
+| C1 | B | object_23 | object_47 | 21° |
+| C2 | E | object_22 | object_37 | -7° |
+| C3 | A | object_21 | object_38 | -37° |
+| C4 | D | object_20 | object_39 | -61° |
+| C5 | G | object_73 | object_31 | -85° |
+| C6 | C | object_30 | object_40 | -117° |
+| C7 | F | object_29 | object_41 | -148° |
+| C8 | Bb | object_28 | object_42 | -176° |
+| C9 | Eb | object_27 | object_43 | 156° |
+| C10 | Ab | object_26 | object_44 | 129° |
+| C11 | C# | object_25 | object_45 | 92° |
 
 ### Inner Ring (6ths)
-| Index | Note | Grove Object | Pan Object |
-|-------|------|--------------|------------|
-| I0 | C# | object_70 | object_34 |
-| I1 | E | object_19 | object_33 |
-| I2 | D | object_71 | object_32 |
-| I3 | C | object_72 | object_36 |
-| I4 | Eb | object_18 | object_35 |
+| Index | Note | Grove Object | Pan Object | Angle |
+|-------|------|--------------|------------|-------|
+| I0 | C# | object_71 | object_32 | -4° |
+| I1 | E | object_19 | object_33 | -57° |
+| I2 | D | object_70 | object_34 | -120° |
+| I3 | C | object_18 | object_35 | 165° |
+| I4 | Eb | object_72 | object_36 | 110° |
 
 ## Files
 

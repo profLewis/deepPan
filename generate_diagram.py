@@ -187,8 +187,17 @@ def classify_rings(note_pads):
 
 
 def assign_notes(ring, note_names):
-    """Assign note names to pads in a ring based on angular position."""
-    sorted_ring = sorted(ring, key=lambda x: x['angle'])
+    """Assign note names to pads in a ring based on angular position.
+
+    Notes are assigned clockwise from the top (12 o'clock = 90°).
+    F# is at the top for outer and central rings.
+    """
+    # Convert angle to clockwise from top (90°)
+    # This makes 90° → 0, then going clockwise: 60° → 30, 0° → 90, -90° → 180, etc.
+    def clockwise_from_top(angle):
+        return (90 - angle) % 360
+
+    sorted_ring = sorted(ring, key=lambda x: clockwise_from_top(x['angle']))
     for i, pad in enumerate(sorted_ring):
         pad['note'] = note_names[i % len(note_names)]
         pad['index'] = i

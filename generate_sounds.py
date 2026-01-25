@@ -30,17 +30,21 @@ NOTE_FREQUENCIES = {
     'B': 493.88,
 }
 
-# Note mapping based on our 3D model analysis
+# Note mapping based on 3D model analysis (clockwise from top)
 # Format: index -> (note_name, octave, ring_type)
+#
+# Notes arranged clockwise from 12 o'clock:
+# Outer/Central: F#, B, E, A, D, G, C, F, Bb, Eb, Ab, C#
+# Inner: C#, E, D, C, Eb
 NOTE_MAP = {
-    # Inner Ring (5 notes, 6th octave) - from angular position analysis
+    # Inner Ring (5 notes, 6th octave) - clockwise from top
     'I0': ('C#', 6, 'inner'),
     'I1': ('E', 6, 'inner'),
     'I2': ('D', 6, 'inner'),
     'I3': ('C', 6, 'inner'),
     'I4': ('Eb', 6, 'inner'),
 
-    # Central Ring (12 notes, 5th octave)
+    # Central Ring (12 notes, 5th octave) - clockwise from top
     'C0': ('F#', 5, 'central'),
     'C1': ('B', 5, 'central'),
     'C2': ('E', 5, 'central'),
@@ -54,7 +58,7 @@ NOTE_MAP = {
     'C10': ('Ab', 5, 'central'),
     'C11': ('C#', 5, 'central'),
 
-    # Outer Ring (12 notes, 4th octave)
+    # Outer Ring (12 notes, 4th octave) - clockwise from top
     'O0': ('F#', 4, 'outer'),
     'O1': ('B', 4, 'outer'),
     'O2': ('E', 4, 'outer'),
