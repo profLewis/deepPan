@@ -326,11 +326,75 @@ def generate_html(note_pads, output_path):
             margin-top: 20px;
         }}
         .credit a {{ color: #888; }}
+        .sequence-input {{
+            margin: 20px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            max-width: 600px;
+        }}
+        .sequence-input input[type="text"] {{
+            width: 100%;
+            padding: 12px 15px;
+            font-size: 16px;
+            font-family: monospace;
+            border: 2px solid #444;
+            border-radius: 8px;
+            background: #2a2a2a;
+            color: white;
+            outline: none;
+        }}
+        .sequence-input input[type="text"]:focus {{
+            border-color: #FFD700;
+        }}
+        .sequence-input input[type="text"]::placeholder {{
+            color: #666;
+        }}
+        .btn-row {{
+            display: flex;
+            gap: 10px;
+        }}
+        .play-btn, .stop-btn {{
+            padding: 10px 25px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .play-btn {{
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+        }}
+        .play-btn:hover {{ background: linear-gradient(135deg, #27ae60, #1e8449); }}
+        .play-btn:disabled {{ background: #555; cursor: not-allowed; }}
+        .stop-btn {{
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }}
+        .stop-btn:hover {{ background: linear-gradient(135deg, #c0392b, #a93226); }}
+        .sequence-help {{
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }}
     </style>
 </head>
 <body>
     <h1>Tenor Steel Pan</h1>
     <p class="subtitle">deepPan Interactive</p>
+
+    <div class="sequence-input">
+        <input type="text" id="sequenceInput" placeholder="Enter notes: C4 E4 G4 C5  (use ,, for pause)">
+        <div class="btn-row">
+            <button class="play-btn" id="playBtn" onclick="playSequence()">Play</button>
+            <button class="stop-btn" id="stopBtn" onclick="stopSequence()">Stop</button>
+        </div>
+        <p class="sequence-help">Notes: C4-B4 (outer), C5-B5 (central), C6-Eb6 (inner) | Pause: ,,</p>
+    </div>
 
     <div class="pan-container">
         <svg viewBox="{viewbox}" id="panSvg">
@@ -465,6 +529,116 @@ def generate_html(note_pads, output_path):
                 svg.appendChild(g);
             }});
         }}
+
+        // Sequence playback
+        let sequencePlaying = false;
+        let sequenceTimeout = null;
+
+        // Map note names to their indices
+        const noteNameToIdx = {{}};
+        noteShapes.forEach(note => {{
+            // Create key like "C4", "F#5", "Bb4"
+            const key = note.name + note.octave;
+            noteNameToIdx[key] = note.idx;
+            // Also add enharmonic equivalents
+            const enharmonics = {{'C#': 'Db', 'Eb': 'D#', 'F#': 'Gb', 'Ab': 'G#', 'Bb': 'A#'}};
+            if (enharmonics[note.name]) {{
+                noteNameToIdx[enharmonics[note.name] + note.octave] = note.idx;
+            }}
+        }});
+
+        function parseSequence(input) {{
+            // Replace ,, with a special pause token
+            let text = input.replace(/,,/g, ' PAUSE ');
+            // Split on spaces and commas
+            const tokens = text.split(/[\\s,]+/).filter(t => t.length > 0);
+            return tokens;
+        }}
+
+        function findNoteElement(idx) {{
+            const shapes = document.querySelectorAll('.note-shape');
+            for (const shape of shapes) {{
+                // Check if this shape corresponds to the idx
+                const label = shape.querySelector('.note-label');
+                if (label) {{
+                    const note = noteShapes.find(n => n.idx === idx);
+                    if (note && label.textContent === note.name) {{
+                        return shape;
+                    }}
+                }}
+            }}
+            return null;
+        }}
+
+        async function playSequence() {{
+            const input = document.getElementById('sequenceInput').value.trim();
+            if (!input) return;
+
+            const tokens = parseSequence(input);
+            if (tokens.length === 0) return;
+
+            sequencePlaying = true;
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('nowPlaying').textContent = 'Playing sequence...';
+
+            const noteDuration = 300; // ms per note
+            const pauseDuration = 300; // ms for pause
+
+            for (let i = 0; i < tokens.length && sequencePlaying; i++) {{
+                const token = tokens[i];
+
+                if (token === 'PAUSE' || token === '-' || token === '.' || token.toLowerCase() === 'r' || token.toLowerCase() === 'rest') {{
+                    // Pause
+                    document.getElementById('nowPlaying').textContent = '(pause)';
+                    await new Promise(resolve => {{
+                        sequenceTimeout = setTimeout(resolve, pauseDuration);
+                    }});
+                }} else {{
+                    // Try to find the note
+                    const idx = noteNameToIdx[token];
+                    if (idx) {{
+                        const note = noteShapes.find(n => n.idx === idx);
+                        if (note) {{
+                            const element = findNoteElement(idx);
+                            playNote(idx, note.name, note.octave, element);
+                        }}
+                    }} else {{
+                        document.getElementById('nowPlaying').textContent = `Unknown: ${{token}}`;
+                    }}
+                    await new Promise(resolve => {{
+                        sequenceTimeout = setTimeout(resolve, noteDuration);
+                    }});
+                }}
+            }}
+
+            sequencePlaying = false;
+            document.getElementById('playBtn').disabled = false;
+            if (sequencePlaying === false) {{
+                document.getElementById('nowPlaying').textContent = 'Sequence complete';
+            }}
+        }}
+
+        function stopSequence() {{
+            sequencePlaying = false;
+            if (sequenceTimeout) {{
+                clearTimeout(sequenceTimeout);
+                sequenceTimeout = null;
+            }}
+            if (currentAudio) {{
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+            }}
+            document.querySelectorAll('.note-shape').forEach(el => el.classList.remove('playing'));
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('nowPlaying').textContent = 'Stopped';
+        }}
+
+        // Allow Enter key to play sequence
+        document.getElementById('sequenceInput').addEventListener('keypress', function(e) {{
+            if (e.key === 'Enter' && !sequencePlaying) {{
+                playSequence();
+            }}
+        }});
 
         // Initialize
         preloadAudio();
