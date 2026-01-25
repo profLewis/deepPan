@@ -462,6 +462,52 @@ def transform_cylinder_to_normal(cylinder_verts, centroid, normal):
     return translated
 
 
+def compute_cylinder_surface_offset(pan_verts, centroid, normal, cylinder_radius):
+    """
+    Compute how much to lower the cylinder to avoid protrusions through the pan surface.
+
+    The pan surface is curved, so the surface height at the cylinder footprint edge
+    may be lower than at the centroid. We find the minimum surface height within
+    the cylinder's footprint and return the offset needed to lower the cylinder.
+
+    Returns: offset amount (negative means lower the cylinder)
+    """
+    # Create local coordinate system with normal as Z
+    z_local = normal / np.linalg.norm(normal)
+
+    # Find perpendicular axes
+    if abs(z_local[0]) < 0.9:
+        x_local = np.cross(z_local, np.array([1, 0, 0]))
+    else:
+        x_local = np.cross(z_local, np.array([0, 1, 0]))
+    x_local = x_local / np.linalg.norm(x_local)
+    y_local = np.cross(z_local, x_local)
+
+    # Transform pan vertices to local coordinates (relative to centroid)
+    # In local coords: centroid is at origin, normal points along +Z
+    rel_verts = pan_verts - centroid
+    local_x = rel_verts @ x_local
+    local_y = rel_verts @ y_local
+    local_z = rel_verts @ z_local
+
+    # Find vertices within cylinder radius (with small margin)
+    radial_dist = np.sqrt(local_x**2 + local_y**2)
+    within_radius = radial_dist <= cylinder_radius * 1.1  # 10% margin
+
+    if not np.any(within_radius):
+        return 0.0  # No adjustment needed
+
+    # Find minimum Z (lowest surface point within cylinder footprint)
+    min_z = local_z[within_radius].min()
+
+    # If min_z is negative, the surface dips below the centroid plane
+    # We should lower the cylinder top to this level (plus small margin)
+    if min_z < 0:
+        return min_z - 0.5  # Extra 0.5mm margin
+
+    return 0.0
+
+
 def find_boundary_edges(faces):
     """Find boundary edges (edges that belong to only one face)."""
     edge_count = {}
@@ -769,6 +815,15 @@ def generate_notepad(note_index, obj_path, output_dir,
     # The cylinder top should be at the surface, extending downward (into the pan)
     cylinder_verts_transformed = transform_cylinder_to_normal(
         cylinder_verts, pan_surface_centroid, notepad_normal)
+
+    # Check if cylinder protrudes through curved surface and lower if needed
+    cylinder_outer_radius = MOUNT_INNER_DIAMETER/2 + MOUNT_WALL_THICKNESS + MOUNT_THREAD_DEPTH
+    surface_offset = compute_cylinder_surface_offset(
+        pan_verts, pan_surface_centroid, notepad_normal, cylinder_outer_radius)
+    if surface_offset < 0:
+        # Lower the cylinder along the normal direction
+        cylinder_verts_transformed = cylinder_verts_transformed + notepad_normal * surface_offset
+        print(f"  Cylinder lowered by {-surface_offset:.2f}mm to avoid surface protrusion")
 
     # Add cylinder to combined mesh
     n_solid_verts = len(solid_verts)
