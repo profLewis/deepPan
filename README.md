@@ -130,6 +130,86 @@ Open `index.html` in a browser to play notes by clicking on the pan visualizatio
 ./deepPanPlay --list
 ```
 
+## Sound Design Tools
+
+### Interactive Synthesizer (`synth.html`)
+
+A browser-based tool for designing steel pan sounds with real-time parameter control.
+
+**How to run locally:**
+```bash
+# Option 1: Open directly in browser
+open synth.html                           # macOS
+xdg-open synth.html                       # Linux
+start synth.html                          # Windows
+
+# Option 2: Serve locally (recommended for some browsers)
+python -m http.server 8000
+# Then open http://localhost:8000/synth.html
+```
+
+**Run online (no installation):**
+- **GitHub Pages**: Enable Pages on this repo, then access at `https://<username>.github.io/deepPan/synth.html`
+- **Direct from GitHub**: Use [raw.githack.com](https://raw.githack.com) to serve directly
+- **CodePen/JSFiddle**: Copy the HTML into an online editor for quick testing
+
+**Features:**
+- Real-time audio synthesis using Web Audio API
+- Sliders for all synthesis parameters (ADSR envelope, harmonics, filter, brightness)
+- 5 presets: Default, Bright, Mellow, Bell, Pluck
+- Keyboard shortcuts: QWERTY row = Central ring, ASDF row = Outer ring, ZXCV row = Inner ring
+- Sequence player for entering melodies
+- **CLI command display** shows the equivalent `generate_sounds.py` command
+
+**Parameters:**
+
+| Group | Parameter | Range | Default | Description |
+|-------|-----------|-------|---------|-------------|
+| Envelope | Attack | 1-200ms | 15ms | Time to reach peak |
+| | Decay | 50-2000ms | 500ms | Time to reach sustain |
+| | Sustain | 0-100% | 20% | Sustained level |
+| | Release | 50-2000ms | 300ms | Time to fade out |
+| Harmonics | Fundamental | 0-100% | 100% | Base frequency amplitude |
+| | 2nd Harmonic | 0-100% | 30% | Octave above |
+| | 3rd Harmonic | 0-100% | 10% | Fifth above octave |
+| | 4th Harmonic | 0-100% | 5% | Two octaves above |
+| | Sub Bass | 0-100% | 20% | Octave below |
+| Character | Detune | 0-20 cents | 2 | Beating effect |
+| | Filter | 500-10000Hz | 6000Hz | Low-pass cutoff |
+| | Brightness | 0-100% | 50% | High frequency boost |
+| Output | Duration | 0.5-3.0s | 1.5s | Note length |
+| | Volume | 0-100% | 85% | Output level |
+
+### Sound Generator CLI (`generate_sounds.py`)
+
+Generate WAV files with customizable synthesis parameters.
+
+```bash
+# Generate all notes with defaults
+python generate_sounds.py
+
+# Use a preset
+python generate_sounds.py --preset bright
+
+# Custom parameters
+python generate_sounds.py --attack 5 --decay 300 --brightness 80
+
+# Single note
+python generate_sounds.py C4
+
+# List all parameters
+python generate_sounds.py --list-params
+
+# Available presets
+python generate_sounds.py --preset default   # Warm, balanced steel pan
+python generate_sounds.py --preset bright    # Crisp, cutting tone
+python generate_sounds.py --preset mellow    # Soft, ambient
+python generate_sounds.py --preset bell      # Long, ringing
+python generate_sounds.py --preset pluck     # Short, percussive
+```
+
+The synthesizer and CLI use identical parameters, so you can design sounds in the browser, then regenerate all samples using the CLI command shown.
+
 ## File Structure
 
 ```
@@ -139,15 +219,17 @@ deepPan/
 │   ├── mounts/               # Mount hardware STL/OBJ
 │   └── notepads/             # Note pad STL/OBJ
 ├── sounds/                   # Synthesized audio samples
+│   └── params.json           # Parameters used for generation
 ├── docs/                     # Documentation images
 ├── generate_notepad.py       # Note pad generator
 ├── generate_mount_base.py    # Mount base generator
 ├── generate_outer_sleeve.py  # Outer sleeve generator
 ├── generate_diagram.py       # Layout diagram generator
-├── generate_sounds.py        # Audio synthesis
+├── generate_sounds.py        # Sound synthesis CLI
 ├── generate_interactive.py   # Interactive HTML generator
-├── index.html                # Interactive player
-├── deepPanPlay               # Command-line player
+├── index.html                # Interactive pan player
+├── synth.html                # Sound design tool with sliders
+├── deepPanPlay               # Command-line melody player
 └── README.md
 ```
 
