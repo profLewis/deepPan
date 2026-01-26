@@ -19,7 +19,7 @@ PAN_SCALE = 2.0
 # Thickness for the solids (mm)
 PAN_THICKNESS = 1.5       # Thickness of the pan playing surface (downward)
 GROVE_DEPTH = 1.5         # Groove thickness downward (same as pan)
-GROVE_PROTRUSION = 0.8    # Groove protrusion upward (ridge above surface)
+GROVE_PROTRUSION = 0.0    # Groove protrusion upward (0 = no lip)
 
 # Mounting cylinder parameters (mm)
 MOUNT_INNER_DIAMETER = 23.5   # Internal diameter
@@ -253,8 +253,8 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
     def in_notch(seg_idx):
         return seg_idx >= notch_start or seg_idx < notch_end
 
-    # Number of Z levels
-    z_levels = max(int(depth / (thread_pitch / 4)), 8)
+    # Number of Z levels (16 per pitch for smooth helical thread)
+    z_levels = max(int(depth / thread_pitch * 16), 32)
 
     # Generate cylinder vertices (excluding notch segments)
     inner_rings = []
@@ -266,6 +266,11 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
         inner_ring = {}
         outer_ring = {}
 
+        # Thread phase depends only on Z (not angle) for non-helical push-fit threads
+        thread_phase = (z_idx / z_levels * depth / thread_pitch) % 1.0
+        thread_h = thread_depth * (1 - abs(2 * thread_phase - 1))
+        thread_r = outer_r + thread_h
+
         for i in range(segments):
             if in_notch(i):
                 continue
@@ -276,12 +281,9 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
             inner_ring[i] = len(vertices)
             vertices.append([inner_r * math.cos(angle), inner_r * math.sin(angle), z])
 
-            # Outer vertex with thread profile
-            thread_phase = (z_idx / z_levels * depth / thread_pitch + i / segments) % 1.0
-            thread_h = thread_depth * (1 - abs(2 * thread_phase - 1))
-            r = outer_r + thread_h
+            # Outer vertex with thread profile (same radius for all segments at this Z)
             outer_ring[i] = len(vertices)
-            vertices.append([r * math.cos(angle), r * math.sin(angle), z])
+            vertices.append([thread_r * math.cos(angle), thread_r * math.sin(angle), z])
 
         inner_rings.append(inner_ring)
         outer_rings.append(outer_ring)
@@ -325,14 +327,12 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
         faces.append([inner_rings[0][i], outer_rings[0][i],
                      outer_rings[0][i_next], inner_rings[0][i_next]])
 
-    # Top cap notch closure
+    # Top cap notch closure (connects main cap to notch edges)
     faces.append([notch_inner_left[0], notch_outer_left[0],
                  outer_rings[0][last_valid], inner_rings[0][last_valid]])
     faces.append([inner_rings[0][first_valid], outer_rings[0][first_valid],
                  notch_outer_right[0], notch_inner_right[0]])
-    # Top of notch opening
-    faces.append([notch_inner_right[0], notch_outer_right[0],
-                 notch_outer_left[0], notch_inner_left[0]])
+    # NOTE: No face across notch opening - it's an open slot for wires
 
     # Bottom cap
     for idx in range(len(valid_segs) - 1):
@@ -341,14 +341,12 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
         faces.append([inner_rings[-1][i], inner_rings[-1][i_next],
                      outer_rings[-1][i_next], outer_rings[-1][i]])
 
-    # Bottom cap notch closure
+    # Bottom cap notch closure (connects main cap to notch edges)
     faces.append([notch_inner_left[-1], inner_rings[-1][last_valid],
                  outer_rings[-1][last_valid], notch_outer_left[-1]])
     faces.append([inner_rings[-1][first_valid], notch_inner_right[-1],
                  notch_outer_right[-1], outer_rings[-1][first_valid]])
-    # Bottom of notch opening
-    faces.append([notch_inner_left[-1], notch_outer_left[-1],
-                 notch_outer_right[-1], notch_inner_right[-1]])
+    # NOTE: No face across notch opening - it's an open slot for wires
 
     # Inner wall (cylinder bore)
     for z_idx in range(z_levels):
