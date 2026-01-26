@@ -4,7 +4,8 @@ Generate an outer sleeve that screws onto the mount base.
 
 Features:
 - Internal thread at top to fit mount base external thread
-- Simple solid walls (NO notch - notch is in inner pieces)
+- Grip ridges on exterior
+- Wire slit through the wall (aligned with inner pieces)
 - Solid floor at bottom
 """
 
@@ -30,15 +31,23 @@ FLOOR_THICKNESS = 2.0
 THREAD_REGION_HEIGHT = MOUNT_BASE_HEIGHT  # 12mm
 
 # Floor position - must be below where PCB sits
-# Mount base is 12mm, PCB bosses add 3mm, PCB + clearance add ~3mm more
 FLOOR_Z = -MOUNT_BASE_HEIGHT - PCB_BOSS_HEIGHT - 5.0  # -20mm
 SLEEVE_HEIGHT = -FLOOR_Z + FLOOR_THICKNESS  # 22mm
+
+# Grip parameters
+GRIP_RIDGES = 12
+GRIP_RIDGE_DEPTH = 1.5
+GRIP_START_Z = -2.0
+GRIP_END_Z = -18.0
+
+# Slit parameters
+SLIT_WIDTH = 5.0
 
 SEGMENTS = 48
 
 
 def generate_sleeve():
-    """Generate simple sleeve - cylinder with internal thread, no notch."""
+    """Generate sleeve with internal thread, grip ridges, and wire slit."""
     vertices = []
     faces = []
 
@@ -52,107 +61,298 @@ def generate_sleeve():
 
     z_levels_thread = max(int(THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH * 16), 32)
 
-    # ===== INTERIOR THREADED (z_top to z_thread_bottom) =====
-    int_thread_rings = []
-    for z_idx in range(z_levels_thread + 1):
-        z = z_top - (z_idx / z_levels_thread) * THREAD_REGION_HEIGHT
-        thread_phase = (z_idx / z_levels_thread * THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH) % 1.0
-        thread_h = SLEEVE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
-        r = inner_r - thread_h
+    # Slit setup
+    slit_half_angle = math.atan2(SLIT_WIDTH / 2, inner_r)
+    slit_segs = max(2, int(slit_half_angle * 2 * SEGMENTS / (2 * math.pi)) + 1)
+    slit_start = SEGMENTS - slit_segs // 2
+    slit_end = (slit_segs + 1) // 2
 
-        ring = []
-        for seg in range(SEGMENTS):
+    def in_slit(seg):
+        return seg >= slit_start or seg < slit_end
+
+    valid_segs = [i for i in range(SEGMENTS) if not in_slit(i)]
+    first_valid = valid_segs[0]
+    last_valid = valid_segs[-1]
+    first_angle = 2 * math.pi * first_valid / SEGMENTS
+    last_angle = 2 * math.pi * last_valid / SEGMENTS
+
+    def grip_radius(angle, z):
+        if z > GRIP_START_Z or z < GRIP_END_Z:
+            return outer_r
+        ridge_angle = 2 * math.pi / GRIP_RIDGES
+        phase = (angle % ridge_angle) / ridge_angle
+        ridge_height = GRIP_RIDGE_DEPTH * 0.5 * (1 + math.cos(2 * math.pi * phase))
+        return outer_r + ridge_height
+
+    # Collect all Z levels
+    z_levels = [z_top]
+    for z_idx in range(1, z_levels_thread + 1):
+        z_levels.append(z_top - (z_idx / z_levels_thread) * THREAD_REGION_HEIGHT)
+    z_levels.append(z_thread_bottom)
+    z_levels.append(z_floor)
+    z_levels.append(z_bottom)
+    # Add grip intermediate levels
+    grip_z_steps = 8
+    for i in range(1, grip_z_steps):
+        z = GRIP_START_Z + (GRIP_END_Z - GRIP_START_Z) * i / grip_z_steps
+        z_levels.append(z)
+    z_levels = sorted(set(z_levels), reverse=True)
+
+    # Create interior rings (only in threaded and plain regions)
+    interior_rings = []
+    for z in z_levels:
+        if z < z_floor:
+            interior_rings.append(None)
+            continue
+        if z >= z_thread_bottom:
+            # Threaded region
+            t = (z_top - z) / THREAD_REGION_HEIGHT if THREAD_REGION_HEIGHT > 0 else 0
+            thread_phase = (t * THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH) % 1.0
+            thread_h = SLEEVE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
+            r = inner_r - thread_h
+        else:
+            # Plain region
+            r = inner_r
+
+        ring = {}
+        for seg in valid_segs:
             angle = 2 * math.pi * seg / SEGMENTS
-            ring.append(len(vertices))
+            ring[seg] = len(vertices)
             vertices.append([r * math.cos(angle), r * math.sin(angle), z])
-        int_thread_rings.append(ring)
+        interior_rings.append(ring)
 
-    for z_idx in range(z_levels_thread):
-        for seg in range(SEGMENTS):
-            seg_next = (seg + 1) % SEGMENTS
-            faces.append([
-                int_thread_rings[z_idx][seg],
-                int_thread_rings[z_idx][seg_next],
-                int_thread_rings[z_idx + 1][seg_next],
-                int_thread_rings[z_idx + 1][seg]
-            ])
+    # Create exterior rings
+    exterior_rings = []
+    for z in z_levels:
+        ring = {}
+        for seg in valid_segs:
+            angle = 2 * math.pi * seg / SEGMENTS
+            r = grip_radius(angle, z)
+            ring[seg] = len(vertices)
+            vertices.append([r * math.cos(angle), r * math.sin(angle), z])
+        exterior_rings.append(ring)
 
-    # ===== INTERIOR PLAIN (z_thread_bottom to z_floor) =====
-    int_plain_top = []
-    int_plain_floor = []
-    for seg in range(SEGMENTS):
+    # Floor and bottom rings at inner_r and outer_r
+    z_floor_idx = z_levels.index(z_floor)
+    z_bottom_idx = z_levels.index(z_bottom)
+
+    floor_ring = {}
+    for seg in valid_segs:
         angle = 2 * math.pi * seg / SEGMENTS
-        int_plain_top.append(len(vertices))
-        vertices.append([inner_r * math.cos(angle), inner_r * math.sin(angle), z_thread_bottom])
-        int_plain_floor.append(len(vertices))
+        floor_ring[seg] = len(vertices)
         vertices.append([inner_r * math.cos(angle), inner_r * math.sin(angle), z_floor])
 
-    # Connect thread bottom to plain top
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([
-            int_thread_rings[-1][seg],
-            int_thread_rings[-1][seg_next],
-            int_plain_top[seg_next],
-            int_plain_top[seg]
-        ])
-
-    # Connect plain top to floor
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([
-            int_plain_top[seg],
-            int_plain_top[seg_next],
-            int_plain_floor[seg_next],
-            int_plain_floor[seg]
-        ])
-
-    # Floor disk
-    floor_center = len(vertices)
-    vertices.append([0, 0, z_floor])
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([floor_center, int_plain_floor[seg], int_plain_floor[seg_next]])
-
-    # ===== EXTERIOR (simple cylinder, z_top to z_bottom) =====
-    ext_top = []
-    ext_floor = []
-    ext_bottom = []
-    for seg in range(SEGMENTS):
+    bottom_ring = {}
+    for seg in valid_segs:
         angle = 2 * math.pi * seg / SEGMENTS
-        ext_top.append(len(vertices))
-        vertices.append([outer_r * math.cos(angle), outer_r * math.sin(angle), z_top])
-        ext_floor.append(len(vertices))
-        vertices.append([outer_r * math.cos(angle), outer_r * math.sin(angle), z_floor])
-        ext_bottom.append(len(vertices))
+        bottom_ring[seg] = len(vertices)
         vertices.append([outer_r * math.cos(angle), outer_r * math.sin(angle), z_bottom])
 
-    # Connect exterior top to floor
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([ext_top[seg], ext_floor[seg], ext_floor[seg_next], ext_top[seg_next]])
+    floor_center = len(vertices)
+    vertices.append([0, 0, z_floor])
+    bottom_center = len(vertices)
+    vertices.append([0, 0, z_bottom])
 
-    # Connect exterior floor to bottom
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([ext_floor[seg], ext_bottom[seg], ext_bottom[seg_next], ext_floor[seg_next]])
+    # Slit edge vertices
+    slit_floor_left = len(vertices)
+    vertices.append([inner_r * math.cos(last_angle), inner_r * math.sin(last_angle), z_floor])
+    slit_floor_right = len(vertices)
+    vertices.append([inner_r * math.cos(first_angle), inner_r * math.sin(first_angle), z_floor])
+    slit_bottom_left = len(vertices)
+    vertices.append([outer_r * math.cos(last_angle), outer_r * math.sin(last_angle), z_bottom])
+    slit_bottom_right = len(vertices)
+    vertices.append([outer_r * math.cos(first_angle), outer_r * math.sin(first_angle), z_bottom])
 
-    # ===== TOP ANNULUS =====
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
+    # Slit wall vertices at each z level
+    slit_int_left = []
+    slit_ext_left = []
+    slit_int_right = []
+    slit_ext_right = []
+
+    for i, z in enumerate(z_levels):
+        if z >= z_floor:
+            # Interior exists
+            if z >= z_thread_bottom:
+                t = (z_top - z) / THREAD_REGION_HEIGHT if THREAD_REGION_HEIGHT > 0 else 0
+                thread_phase = (t * THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH) % 1.0
+                thread_h = SLEEVE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
+                int_r = inner_r - thread_h
+            else:
+                int_r = inner_r
+
+            slit_int_left.append(len(vertices))
+            vertices.append([int_r * math.cos(last_angle), int_r * math.sin(last_angle), z])
+            slit_int_right.append(len(vertices))
+            vertices.append([int_r * math.cos(first_angle), int_r * math.sin(first_angle), z])
+        else:
+            slit_int_left.append(slit_floor_left)
+            slit_int_right.append(slit_floor_right)
+
+        ext_r_left = grip_radius(last_angle, z)
+        ext_r_right = grip_radius(first_angle, z)
+
+        if z == z_bottom:
+            slit_ext_left.append(slit_bottom_left)
+            slit_ext_right.append(slit_bottom_right)
+        else:
+            slit_ext_left.append(len(vertices))
+            vertices.append([ext_r_left * math.cos(last_angle), ext_r_left * math.sin(last_angle), z])
+            slit_ext_right.append(len(vertices))
+            vertices.append([ext_r_right * math.cos(first_angle), ext_r_right * math.sin(first_angle), z])
+
+    # ===== BUILD FACES =====
+
+    # Interior surface
+    for i in range(len(z_levels) - 1):
+        if interior_rings[i] is None or interior_rings[i + 1] is None:
+            continue
+        for j in range(len(valid_segs) - 1):
+            seg, seg_next = valid_segs[j], valid_segs[j + 1]
+            faces.append([
+                interior_rings[i][seg],
+                interior_rings[i][seg_next],
+                interior_rings[i + 1][seg_next],
+                interior_rings[i + 1][seg]
+            ])
+
+    # Connect interior to floor
+    last_int_idx = None
+    for i, ring in enumerate(interior_rings):
+        if ring is not None:
+            last_int_idx = i
+    if last_int_idx is not None:
+        for j in range(len(valid_segs) - 1):
+            seg, seg_next = valid_segs[j], valid_segs[j + 1]
+            faces.append([
+                interior_rings[last_int_idx][seg],
+                interior_rings[last_int_idx][seg_next],
+                floor_ring[seg_next],
+                floor_ring[seg]
+            ])
+
+    # Floor disk
+    for j in range(len(valid_segs) - 1):
+        seg, seg_next = valid_segs[j], valid_segs[j + 1]
+        faces.append([floor_center, floor_ring[seg], floor_ring[seg_next]])
+    faces.append([floor_center, slit_floor_left, floor_ring[last_valid]])
+    faces.append([floor_center, floor_ring[first_valid], slit_floor_right])
+
+    # Exterior surface
+    for i in range(len(z_levels) - 1):
+        for j in range(len(valid_segs) - 1):
+            seg, seg_next = valid_segs[j], valid_segs[j + 1]
+            faces.append([
+                exterior_rings[i][seg],
+                exterior_rings[i + 1][seg],
+                exterior_rings[i + 1][seg_next],
+                exterior_rings[i][seg_next]
+            ])
+
+    # Connect exterior to bottom
+    ext_floor_idx = z_floor_idx
+    for j in range(len(valid_segs) - 1):
+        seg, seg_next = valid_segs[j], valid_segs[j + 1]
         faces.append([
-            ext_top[seg],
-            int_thread_rings[0][seg],
-            int_thread_rings[0][seg_next],
-            ext_top[seg_next]
+            exterior_rings[-1][seg],
+            exterior_rings[-1][seg_next],
+            bottom_ring[seg_next],
+            bottom_ring[seg]
         ])
 
-    # ===== BOTTOM CAP =====
-    bot_center = len(vertices)
-    vertices.append([0, 0, z_bottom])
-    for seg in range(SEGMENTS):
-        seg_next = (seg + 1) % SEGMENTS
-        faces.append([bot_center, ext_bottom[seg_next], ext_bottom[seg]])
+    # Bottom disk
+    for j in range(len(valid_segs) - 1):
+        seg, seg_next = valid_segs[j], valid_segs[j + 1]
+        faces.append([bottom_center, bottom_ring[seg_next], bottom_ring[seg]])
+    faces.append([bottom_center, bottom_ring[last_valid], slit_bottom_left])
+    faces.append([bottom_center, slit_bottom_right, bottom_ring[first_valid]])
+
+    # Top annulus
+    for j in range(len(valid_segs) - 1):
+        seg, seg_next = valid_segs[j], valid_segs[j + 1]
+        faces.append([
+            exterior_rings[0][seg],
+            interior_rings[0][seg],
+            interior_rings[0][seg_next],
+            exterior_rings[0][seg_next]
+        ])
+    # Top annulus slit closures
+    faces.append([exterior_rings[0][last_valid], interior_rings[0][last_valid],
+                 slit_int_left[0], slit_ext_left[0]])
+    faces.append([slit_ext_right[0], slit_int_right[0],
+                 interior_rings[0][first_valid], exterior_rings[0][first_valid]])
+
+    # LEFT SLIT WALL
+    # Interior edge connection
+    for i in range(len(z_levels) - 1):
+        if interior_rings[i] is None or interior_rings[i + 1] is None:
+            # Below floor - no interior
+            if z_levels[i] == z_floor:
+                # Connect floor to bottom via slit wall
+                pass
+            continue
+        faces.append([slit_int_left[i], interior_rings[i][last_valid],
+                     interior_rings[i + 1][last_valid], slit_int_left[i + 1]])
+
+    # Connect last interior to floor
+    if last_int_idx is not None:
+        faces.append([slit_int_left[last_int_idx], interior_rings[last_int_idx][last_valid],
+                     floor_ring[last_valid], slit_floor_left])
+
+    # Exterior edge connection
+    for i in range(len(z_levels) - 1):
+        faces.append([exterior_rings[i][last_valid], slit_ext_left[i],
+                     slit_ext_left[i + 1], exterior_rings[i + 1][last_valid]])
+
+    # Connect exterior to bottom ring (slit_ext_left[-1] == slit_bottom_left, so use triangle)
+    faces.append([exterior_rings[-1][last_valid], slit_bottom_left, bottom_ring[last_valid]])
+
+    # Radial wall (interior to exterior)
+    for i in range(len(z_levels) - 1):
+        if z_levels[i + 1] < z_floor:
+            # Below floor - interior edge is at floor
+            if z_levels[i] >= z_floor:
+                faces.append([slit_int_left[i], slit_ext_left[i], slit_ext_left[i + 1], slit_floor_left])
+            else:
+                faces.append([slit_floor_left, slit_ext_left[i], slit_ext_left[i + 1]])
+        else:
+            faces.append([slit_int_left[i], slit_ext_left[i], slit_ext_left[i + 1], slit_int_left[i + 1]])
+
+    # Inner wall (floor center to bottom center through slit)
+    faces.append([floor_center, slit_floor_left, slit_bottom_left, bottom_center])
+
+    # RIGHT SLIT WALL (opposite winding)
+    # Interior edge connection
+    for i in range(len(z_levels) - 1):
+        if interior_rings[i] is None or interior_rings[i + 1] is None:
+            continue
+        faces.append([interior_rings[i][first_valid], slit_int_right[i],
+                     slit_int_right[i + 1], interior_rings[i + 1][first_valid]])
+
+    # Connect last interior to floor
+    if last_int_idx is not None:
+        faces.append([interior_rings[last_int_idx][first_valid], slit_int_right[last_int_idx],
+                     slit_floor_right, floor_ring[first_valid]])
+
+    # Exterior edge connection
+    for i in range(len(z_levels) - 1):
+        faces.append([slit_ext_right[i], exterior_rings[i][first_valid],
+                     exterior_rings[i + 1][first_valid], slit_ext_right[i + 1]])
+
+    # Connect exterior to bottom ring (slit_ext_right[-1] == slit_bottom_right, so use triangle)
+    faces.append([slit_bottom_right, exterior_rings[-1][first_valid], bottom_ring[first_valid]])
+
+    # Radial wall (exterior to interior)
+    for i in range(len(z_levels) - 1):
+        if z_levels[i + 1] < z_floor:
+            if z_levels[i] >= z_floor:
+                faces.append([slit_ext_right[i], slit_int_right[i], slit_floor_right, slit_ext_right[i + 1]])
+            else:
+                faces.append([slit_ext_right[i], slit_floor_right, slit_ext_right[i + 1]])
+        else:
+            faces.append([slit_ext_right[i], slit_int_right[i], slit_int_right[i + 1], slit_ext_right[i + 1]])
+
+    # Inner wall (floor center to bottom center through slit)
+    faces.append([floor_center, bottom_center, slit_bottom_right, slit_floor_right])
 
     return np.array(vertices), faces
 
@@ -209,7 +409,7 @@ def write_stl(filepath, vertices, faces):
 
 def main():
     print("=" * 60)
-    print("Generating Outer Sleeve (Simple Cylinder)")
+    print("Generating Outer Sleeve with Grip and Slit")
     print("=" * 60)
 
     inner_r = SLEEVE_INNER_DIAMETER / 2
@@ -218,9 +418,11 @@ def main():
     print(f"Dimensions:")
     print(f"  Inner thread root: {SLEEVE_INNER_DIAMETER:.1f}mm")
     print(f"  Outer diameter: {outer_r * 2:.1f}mm")
+    print(f"  Grip outer diameter: {(outer_r + GRIP_RIDGE_DEPTH) * 2:.1f}mm")
     print(f"  Total height: {SLEEVE_HEIGHT:.1f}mm")
     print(f"  Floor at z={FLOOR_Z:.1f}mm")
-    print(f"  (No notch - notch is in inner pieces)")
+    print(f"  Grip: {GRIP_RIDGES} ridges, {GRIP_RIDGE_DEPTH:.1f}mm deep")
+    print(f"  Slit width: {SLIT_WIDTH:.1f}mm")
 
     verts, faces = generate_sleeve()
     print(f"\nMesh: {len(verts)} vertices, {len(faces)} faces")
@@ -230,6 +432,11 @@ def main():
         print("Mesh is watertight and manifold")
     else:
         print(f"WARNING: {len(nm)} non-manifold, {len(bd)} boundary edges")
+        if bd:
+            print("Boundary edges:")
+            for e in bd[:5]:
+                v1, v2 = verts[e[0]], verts[e[1]]
+                print(f"  ({v1[0]:.1f}, {v1[1]:.1f}, {v1[2]:.1f}) - ({v2[0]:.1f}, {v2[1]:.1f}, {v2[2]:.1f})")
 
     bbox = verts.max(axis=0) - verts.min(axis=0)
     print(f"Bounding box: {bbox[0]:.1f} x {bbox[1]:.1f} x {bbox[2]:.1f} mm")
