@@ -137,17 +137,37 @@ def generate_outer_shell():
             else:
                 faces.append([p0, center_idx, p1])
 
-    # Interior threads
-    thread_rings_count = int(BASE_THREAD_HEIGHT / NOTEPAD_THREAD_PITCH) * 2 + 1
-    interior_rings = []
+    # Interior helical threads (must match notepad external thread)
+    # Create a proper helical thread surface
+    z_levels = max(int(BASE_THREAD_HEIGHT / (NOTEPAD_THREAD_PITCH / 4)), 8)
 
-    for i in range(thread_rings_count):
-        z = z_top - (i / (thread_rings_count - 1)) * BASE_THREAD_HEIGHT
-        r = inner_r if (i % 2 == 0) else thread_inner_r
-        interior_rings.append(add_ring(r, z))
+    # Generate helical thread vertices
+    thread_rings = []
+    for z_idx in range(z_levels + 1):
+        z = z_top - (z_idx / z_levels) * BASE_THREAD_HEIGHT
+        ring_start = len(vertices)
 
-    for i in range(len(interior_rings) - 1):
-        connect_rings(interior_rings[i], interior_rings[i + 1], reverse=True)
+        for i in range(SEGMENTS):
+            angle = 2 * np.pi * i / SEGMENTS
+
+            # Helical thread profile - phase varies with both z and angle
+            # This creates the spiral pattern
+            thread_phase = (z_idx / z_levels * BASE_THREAD_HEIGHT / NOTEPAD_THREAD_PITCH + i / SEGMENTS) % 1.0
+            # Triangle wave: 0->1->0 over one pitch
+            thread_h = BASE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
+            # For internal thread, radius decreases at thread crest
+            r = inner_r - thread_h
+
+            vertices.append([r * np.cos(angle), r * np.sin(angle), z])
+
+        thread_rings.append(ring_start)
+
+    # Connect thread rings
+    for i in range(len(thread_rings) - 1):
+        connect_rings(thread_rings[i], thread_rings[i + 1], reverse=True)
+
+    # Store first and last rings for connecting to other parts
+    interior_rings = [thread_rings[0], thread_rings[-1]]
 
     # Exterior with grips
     grip_height = BASE_THREAD_HEIGHT / (GRIP_RIDGE_COUNT * 2)
