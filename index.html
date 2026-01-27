@@ -305,22 +305,30 @@
 
         function initAudioContext() {
             if (audioCtx) return;
-            
+
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioCtx.createAnalyser();
             analyser.fftSize = 512;
             analyser.smoothingTimeConstant = 0.8;
             analyser.connect(audioCtx.destination);
-            
+
+            // Connect already loaded audio files
             Object.entries(audioCache).forEach(([idx, audio]) => {
                 if (!audioSources[idx]) {
                     try {
                         const source = audioCtx.createMediaElementSource(audio);
                         source.connect(analyser);
                         audioSources[idx] = source;
-                    } catch(e) {}
+                    } catch(e) {
+                        console.warn(`Could not connect audio ${idx}:`, e);
+                    }
                 }
             });
+
+            // Resume context immediately (user interaction triggered this)
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
         }
 
         function spawnParticles(x, y, color, count) {
@@ -567,12 +575,13 @@
             });
         }
 
-        function playNote(idx, name, octave, element) {
-            // Resume audio context if visualization is enabled
-            if (vizEnabled && audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume();
+        async function playNote(idx, name, octave, element) {
+            // Always resume audio context if it exists and is suspended
+            // (once MediaElementSource is created, audio ONLY plays through Web Audio)
+            if (audioCtx && audioCtx.state === 'suspended') {
+                await audioCtx.resume();
             }
-            
+
             if (currentAudio) {
                 currentAudio.pause();
                 currentAudio.currentTime = 0;
@@ -580,6 +589,17 @@
 
             const audio = audioCache[idx];
             if (audio) {
+                // Connect to analyser if viz is enabled and not yet connected
+                if (vizEnabled && audioCtx && !audioSources[idx]) {
+                    try {
+                        const source = audioCtx.createMediaElementSource(audio);
+                        source.connect(analyser);
+                        audioSources[idx] = source;
+                    } catch(e) {
+                        // Already connected or error
+                    }
+                }
+
                 currentAudio = audio;
                 audio.currentTime = 0;
                 audio.play().then(() => {
@@ -683,6 +703,11 @@
             const tokens = parseSequence(input);
             if (tokens.length === 0) return;
 
+            // Resume audio context if needed
+            if (audioCtx && audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
             sequencePlaying = true;
             document.getElementById('playBtn').disabled = true;
             document.getElementById('nowPlaying').textContent = 'Playing sequence...';
@@ -706,7 +731,7 @@
                         const note = noteShapes.find(n => n.idx === idx);
                         if (note) {
                             const element = findNoteElement(idx);
-                            playNote(idx, note.name, note.octave, element);
+                            await playNote(idx, note.name, note.octave, element);
                         }
                     } else {
                         document.getElementById('nowPlaying').textContent = `Unknown: ${token}`;
