@@ -117,6 +117,16 @@ python generate_outer_sleeve.py
 
 Open `index.html` in a browser to play notes by clicking on the pan visualization.
 
+## Google Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/profLewis/deepPan/blob/main/deepPan_Colab.ipynb)
+
+Run the synthesizer in your browser with no installation:
+- Interactive sliders for all parameters
+- Play notes and sequences
+- Download generated WAV files
+- Export all 29 notes as ZIP
+
 ## Command-Line Player
 
 ```bash
@@ -255,6 +265,7 @@ deepPan/
 ├── index.html                # Interactive pan player
 ├── synth.html                # Sound design tool (browser)
 ├── synth_pygame.py           # Sound design tool (native Python)
+├── deepPan_Colab.ipynb       # Google Colab notebook
 ├── deepPanPlay               # Command-line melody player
 └── README.md
 ```
