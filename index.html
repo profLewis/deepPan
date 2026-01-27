@@ -192,6 +192,12 @@
             color: white;
         }
         .stop-btn:hover { background: linear-gradient(135deg, #c0392b, #a93226); }
+        .load-btn {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+        .load-btn:hover { background: linear-gradient(135deg, #2980b9, #1f6dad); }
+        .file-input { display: none; }
         .sequence-help {
             font-size: 12px;
             color: #666;
@@ -208,8 +214,10 @@
         <div class="btn-row">
             <button class="play-btn" id="playBtn" onclick="playSequence()">Play</button>
             <button class="stop-btn" id="stopBtn" onclick="stopSequence()">Stop</button>
+            <button class="play-btn load-btn" onclick="document.getElementById('tuneFile').click()">Load</button>
+            <input type="file" id="tuneFile" class="file-input" accept=".txt,.tune,.csv" onchange="loadTuneFile(event)">
         </div>
-        <p class="sequence-help">Notes: C4-B4 (outer), C5-B5 (central), C6-Eb6 (inner) | Pause: ,,</p>
+        <p class="sequence-help">Notes: C4-B4 (outer), C5-B5 (central), C6-Eb6 (inner) | Pause: ,, | Load .txt file with notes</p>
     </div>
 
     <div class="pan-container">
@@ -729,6 +737,35 @@
             document.querySelectorAll('.note-shape').forEach(el => el.classList.remove('playing'));
             document.getElementById('playBtn').disabled = false;
             document.getElementById('nowPlaying').textContent = 'Stopped';
+        }
+
+        // Load tune from file
+        function loadTuneFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                let text = e.target.result.trim();
+                
+                // Handle different formats
+                // Replace newlines with spaces
+                text = text.replace(/[\r\n]+/g, ' ');
+                // Replace multiple spaces with single space
+                text = text.replace(/\s+/g, ' ');
+                // Remove comments (anything after # or //)
+                text = text.replace(/#.*?(?=\s|$)/g, '').replace(/\/\/.*?(?=\s|$)/g, '');
+                
+                document.getElementById('sequenceInput').value = text.trim();
+                document.getElementById('nowPlaying').textContent = 'Loaded: ' + file.name;
+            };
+            reader.onerror = function() {
+                document.getElementById('nowPlaying').textContent = 'Error loading file';
+            };
+            reader.readAsText(file);
+            
+            // Reset file input so same file can be loaded again
+            event.target.value = '';
         }
 
         // Allow Enter key to play sequence
