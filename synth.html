@@ -232,6 +232,32 @@
             color: #FFD700;
             margin-bottom: 10px;
         }
+        .file-btns {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .file-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .file-btn.save { background: #2980b9; color: white; }
+        .file-btn.save:hover { background: #3498db; }
+        .file-btn.load { background: #27ae60; color: white; }
+        .file-btn.load:hover { background: #2ecc71; }
+        .file-input { display: none; }
+        .file-status {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+            min-height: 16px;
+        }
         .cli-command {
             width: 100%;
             padding: 10px;
@@ -465,6 +491,12 @@
             <div class="cli-section">
                 <h3>Equivalent CLI Command</h3>
                 <div class="cli-command" id="cliCommand">python generate_sounds.py</div>
+                <div class="file-btns">
+                    <button class="file-btn save" onclick="saveParams()">Save Params</button>
+                    <button class="file-btn load" onclick="document.getElementById('paramsFile').click()">Load Params</button>
+                    <input type="file" id="paramsFile" class="file-input" accept=".json" onchange="loadParams(event)">
+                </div>
+                <div class="file-status" id="fileStatus"></div>
             </div>
         </div>
     </div>
@@ -659,6 +691,71 @@ function getRawParams() {
         duration: parseFloat(document.getElementById('duration').value),
         volume: parseInt(document.getElementById('volume').value)
     };
+}
+
+// Save parameters to JSON file
+function saveParams() {
+    const params = getRawParams();
+    const json = JSON.stringify(params, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'synth_params.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    document.getElementById('fileStatus').textContent = 'Saved: synth_params.json';
+    setTimeout(() => document.getElementById('fileStatus').textContent = '', 3000);
+}
+
+// Load parameters from JSON file
+function loadParams(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const loaded = JSON.parse(e.target.result);
+            
+            // Map keys (handle different naming conventions)
+            const keyMap = {
+                'sub_bass': 'subBass',
+                'harmonic2': 'harm2',
+                'harmonic3': 'harm3',
+                'harmonic4': 'harm4',
+            };
+            
+            // Apply loaded values to sliders
+            for (let [key, value] of Object.entries(loaded)) {
+                // Convert key if needed
+                const sliderKey = keyMap[key] || key;
+                const slider = document.getElementById(sliderKey);
+                if (slider) {
+                    slider.value = value;
+                    updateSliderDisplay(sliderKey);
+                }
+            }
+            
+            validateADSR();
+            updateCLICommand();
+            updateStaticViz();
+            
+            document.getElementById('fileStatus').textContent = 'Loaded: ' + file.name;
+            setTimeout(() => document.getElementById('fileStatus').textContent = '', 3000);
+        } catch (err) {
+            document.getElementById('fileStatus').textContent = 'Error loading file';
+            console.error('Load error:', err);
+        }
+    };
+    reader.readAsText(file);
+    
+    // Reset file input
+    event.target.value = '';
 }
 
 // Default values for CLI comparison
