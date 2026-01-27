@@ -468,32 +468,111 @@ def print_analysis(result):
     print(cmd)
 
 
+def print_summary_table(results):
+    """Print a summary table of multiple analysis results."""
+    print("\n" + "="*80)
+    print("SUMMARY TABLE")
+    print("="*80)
+
+    # Header
+    print(f"{'File':<30} {'Note':<6} {'Freq':>8} {'On Pan':<6} {'A':>4} {'D':>5} {'S':>4} {'R':>5}")
+    print("-"*80)
+
+    for filepath, result in results.items():
+        filename = filepath.split('/')[-1][:28]
+        note = result['detected_note']
+        freq = f"{result['detected_frequency']:.1f}"
+        on_pan = "Yes" if result['is_pan_note'] else "No"
+        a = result['params']['attack']
+        d = result['params']['decay']
+        s = result['params']['sustain']
+        r = result['params']['release']
+        print(f"{filename:<30} {note:<6} {freq:>8} {on_pan:<6} {a:>4} {d:>5} {s:>4} {r:>5}")
+
+    print("-"*80)
+
+    # Count notes on pan
+    on_pan_count = sum(1 for r in results.values() if r['is_pan_note'])
+    print(f"Total: {len(results)} files, {on_pan_count} notes on tenor pan")
+
+    # Average parameters
+    if results:
+        avg_params = {}
+        param_keys = ['attack', 'decay', 'sustain', 'release', 'fundamental',
+                      'harmonic2', 'harmonic3', 'harmonic4', 'sub_bass',
+                      'filter', 'brightness']
+        for key in param_keys:
+            avg_params[key] = int(np.mean([r['params'][key] for r in results.values()]))
+
+        print("\n--- Average Parameters ---")
+        print(json.dumps(avg_params, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description='Analyze audio to extract steel pan synthesis parameters')
-    parser.add_argument('audio_file', help='Path to WAV file to analyze')
-    parser.add_argument('--output', '-o', help='Output JSON file for parameters')
+    parser.add_argument('audio_files', nargs='+', help='Path to WAV file(s) to analyze')
+    parser.add_argument('--output', '-o', help='Output JSON file for parameters (single file) or directory (multiple files)')
     parser.add_argument('--json', action='store_true', help='Output as JSON only')
+    parser.add_argument('--summary', '-s', action='store_true', help='Show summary table only (for multiple files)')
 
     args = parser.parse_args()
 
-    try:
-        result = analyze_audio(args.audio_file)
+    results = {}
+    errors = []
 
-        if args.json:
-            print(json.dumps(result, indent=2))
-        else:
-            print_analysis(result)
+    for audio_file in args.audio_files:
+        try:
+            result = analyze_audio(audio_file)
+            results[audio_file] = result
 
-        if args.output:
+            # For single file or non-summary mode, print full analysis
+            if len(args.audio_files) == 1 or not args.summary:
+                if args.json:
+                    print(json.dumps(result, indent=2))
+                else:
+                    print_analysis(result)
+
+        except FileNotFoundError:
+            errors.append(f"File not found: {audio_file}")
+        except Exception as e:
+            errors.append(f"Error analyzing {audio_file}: {e}")
+
+    # Print summary table for multiple files
+    if len(args.audio_files) > 1 and results:
+        print_summary_table(results)
+
+    # Handle output
+    if args.output and results:
+        import os
+        if len(results) == 1:
+            # Single file - save params directly
+            result = list(results.values())[0]
             with open(args.output, 'w') as f:
                 json.dump(result['params'], f, indent=2)
             print(f"\nParameters saved to {args.output}")
+        else:
+            # Multiple files - save to directory or combined JSON
+            if args.output.endswith('.json'):
+                # Save all results to single JSON
+                all_params = {filepath: r['params'] for filepath, r in results.items()}
+                with open(args.output, 'w') as f:
+                    json.dump(all_params, f, indent=2)
+                print(f"\nAll parameters saved to {args.output}")
+            else:
+                # Save to directory
+                os.makedirs(args.output, exist_ok=True)
+                for filepath, result in results.items():
+                    basename = os.path.splitext(os.path.basename(filepath))[0]
+                    outfile = os.path.join(args.output, f"{basename}_params.json")
+                    with open(outfile, 'w') as f:
+                        json.dump(result['params'], f, indent=2)
+                print(f"\nParameters saved to {args.output}/ ({len(results)} files)")
 
-    except FileNotFoundError:
-        print(f"Error: File not found: {args.audio_file}")
-        return 1
-    except Exception as e:
-        print(f"Error analyzing audio: {e}")
+    # Report errors
+    if errors:
+        print("\nErrors:")
+        for err in errors:
+            print(f"  - {err}")
         return 1
 
     return 0

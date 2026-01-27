@@ -501,12 +501,16 @@
 
             <div class="cli-section">
                 <h3>Analyze Audio Sample</h3>
-                <p style="font-size: 11px; color: #888; margin-bottom: 10px;">Load a WAV file to extract synthesis parameters</p>
+                <p style="font-size: 11px; color: #888; margin-bottom: 10px;">Load WAV file(s) to extract synthesis parameters</p>
                 <div class="file-btns">
-                    <button class="file-btn load" onclick="document.getElementById('audioFile').click()" style="background: #8e44ad;">Analyze WAV</button>
-                    <input type="file" id="audioFile" class="file-input" accept=".wav,audio/wav" onchange="analyzeAudio(event)">
+                    <button class="file-btn load" onclick="document.getElementById('audioFile').click()" style="background: #8e44ad;">Analyze WAV(s)</button>
+                    <input type="file" id="audioFile" class="file-input" accept=".wav,audio/wav" multiple onchange="analyzeMultipleAudio(event)">
                 </div>
                 <div id="analysisResult" style="margin-top: 10px; font-size: 11px; color: #aaa;"></div>
+                <div id="fileList" style="margin-top: 10px; display: none;">
+                    <div class="viz-label">Analyzed Files (click to select)</div>
+                    <div id="fileListContent" style="max-height: 120px; overflow-y: auto; background: #111; border-radius: 5px; padding: 5px;"></div>
+                </div>
                 <div class="viz-container" style="margin-top: 10px; display: none;" id="loadedAudioVizContainer">
                     <div class="viz-label">Loaded Audio Waveform</div>
                     <canvas class="viz-canvas" id="loadedAudioViz"></canvas>
@@ -1451,6 +1455,8 @@ function setup() {
 
 let loadedAudioBuffer = null;
 let analyzedParams = null;
+let allAnalysisResults = [];  // Store multiple analysis results
+let selectedResultIndex = 0;  // Currently selected result
 
 // Tenor pan notes for matching
 const TENOR_PAN_NOTES = [
@@ -1683,43 +1689,41 @@ function estimateFilterBrightness(audioData, sampleRate, fundamentalFreq) {
     return { filter: filterCutoff, brightness: brightness };
 }
 
-// Main analysis function
-async function analyzeAudio(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+// Analyze a single audio buffer and return results
+async function analyzeSingleAudio(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));  // slice to avoid detached buffer
 
-    initAudio();
+    // Get mono audio data
+    const audioData = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
 
-    const resultDiv = document.getElementById('analysisResult');
-    resultDiv.innerHTML = '<span style="color: #FFD700;">Analyzing...</span>';
+    // Detect pitch
+    const freqAuto = detectPitchAutocorr(Float32Array.from(audioData), sampleRate);
+    const freqFFT = detectPitchFFT(Float32Array.from(audioData), sampleRate);
+    const freq = Math.abs(freqFFT - freqAuto) > freqAuto * 0.1 ? freqFFT : (freqAuto + freqFFT) / 2;
 
-    try {
-        const arrayBuffer = await file.arrayBuffer();
-        loadedAudioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const { note, octave } = freqToNote(freq);
+    const detectedNote = `${note}${octave}`;
 
-        // Get mono audio data
-        const audioData = loadedAudioBuffer.getChannelData(0);
-        const sampleRate = loadedAudioBuffer.sampleRate;
+    // Check if on pan
+    const onPan = TENOR_PAN_NOTES.includes(detectedNote) ||
+                  TENOR_PAN_NOTES.includes(detectedNote.replace('#', 'b'));
 
-        // Detect pitch
-        const freqAuto = detectPitchAutocorr(Float32Array.from(audioData), sampleRate);
-        const freqFFT = detectPitchFFT(Float32Array.from(audioData), sampleRate);
-        const freq = Math.abs(freqFFT - freqAuto) > freqAuto * 0.1 ? freqFFT : (freqAuto + freqFFT) / 2;
+    // Analyze components
+    const harmonics = analyzeHarmonics(Float32Array.from(audioData), sampleRate, freq);
+    const envelope = analyzeEnvelope(Float32Array.from(audioData), sampleRate);
+    const filterBright = estimateFilterBrightness(Float32Array.from(audioData), sampleRate, freq);
 
-        const { note, octave } = freqToNote(freq);
-        const detectedNote = `${note}${octave}`;
-
-        // Check if on pan
-        const onPan = TENOR_PAN_NOTES.includes(detectedNote) ||
-                      TENOR_PAN_NOTES.includes(detectedNote.replace('#', 'b'));
-
-        // Analyze components
-        const harmonics = analyzeHarmonics(Float32Array.from(audioData), sampleRate, freq);
-        const envelope = analyzeEnvelope(Float32Array.from(audioData), sampleRate);
-        const filterBright = estimateFilterBrightness(Float32Array.from(audioData), sampleRate, freq);
-
-        // Store analyzed params
-        analyzedParams = {
+    return {
+        filename: file.name,
+        audioBuffer: audioBuffer,
+        audioData: audioData,
+        sampleRate: sampleRate,
+        detectedNote: detectedNote,
+        frequency: freq,
+        onPan: onPan,
+        params: {
             attack: envelope.attack,
             decay: envelope.decay,
             sustain: envelope.sustain,
@@ -1734,36 +1738,135 @@ async function analyzeAudio(event) {
             brightness: filterBright.brightness,
             duration: audioData.length / sampleRate,
             volume: 85
-        };
+        }
+    };
+}
 
-        // Display results
+// Main analysis function for multiple files
+async function analyzeMultipleAudio(event) {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
+
+    initAudio();
+
+    const resultDiv = document.getElementById('analysisResult');
+    const fileListDiv = document.getElementById('fileList');
+    const fileListContent = document.getElementById('fileListContent');
+
+    resultDiv.innerHTML = `<span style="color: #FFD700;">Analyzing ${files.length} file(s)...</span>`;
+
+    allAnalysisResults = [];
+
+    for (let i = 0; i < files.length; i++) {
+        try {
+            resultDiv.innerHTML = `<span style="color: #FFD700;">Analyzing ${i + 1}/${files.length}: ${files[i].name}</span>`;
+            const result = await analyzeSingleAudio(files[i]);
+            allAnalysisResults.push(result);
+        } catch (err) {
+            console.error(`Error analyzing ${files[i].name}:`, err);
+            allAnalysisResults.push({
+                filename: files[i].name,
+                error: err.message
+            });
+        }
+    }
+
+    // Display file list if multiple files
+    if (allAnalysisResults.length > 1) {
+        fileListDiv.style.display = 'block';
+        fileListContent.innerHTML = allAnalysisResults.map((r, i) => {
+            if (r.error) {
+                return `<div style="padding: 4px; color: #ff4444; cursor: default;">${r.filename}: Error</div>`;
+            }
+            const onPanIcon = r.onPan ? '&#10003;' : '&#10007;';
+            const onPanColor = r.onPan ? '#00ff88' : '#ff6644';
+            return `<div class="file-item" data-index="${i}" onclick="selectAnalysisResult(${i})"
+                        style="padding: 4px; cursor: pointer; border-radius: 3px; margin: 2px 0; ${i === 0 ? 'background: #333;' : ''}">
+                <span style="color: ${onPanColor};">${onPanIcon}</span>
+                <strong>${r.detectedNote}</strong> (${r.frequency.toFixed(0)}Hz) - ${r.filename}
+            </div>`;
+        }).join('');
+
+        // Show summary
+        const validResults = allAnalysisResults.filter(r => !r.error);
+        const onPanCount = validResults.filter(r => r.onPan).length;
         resultDiv.innerHTML = `
-            <div style="color: #00ff88; font-weight: bold;">Detected: ${detectedNote} (${freq.toFixed(1)} Hz)</div>
-            <div style="color: ${onPan ? '#00ff88' : '#ff6644'};">
-                ${onPan ? 'On tenor pan' : 'Not on tenor pan'}
-            </div>
-            <div style="margin-top: 5px;">
-                <strong>Envelope:</strong> A=${envelope.attack}ms D=${envelope.decay}ms S=${envelope.sustain}% R=${envelope.release}ms
-            </div>
-            <div>
-                <strong>Harmonics:</strong> Sub=${harmonics.sub_bass}% H2=${harmonics.harmonic2}% H3=${harmonics.harmonic3}% H4=${harmonics.harmonic4}%
-            </div>
-            <div>
-                <strong>Character:</strong> Filter=${filterBright.filter}Hz Bright=${filterBright.brightness}%
-            </div>
+            <div style="color: #FFD700; font-weight: bold;">Analyzed ${validResults.length} files</div>
+            <div style="color: #00ff88;">${onPanCount} notes on tenor pan</div>
+            <div style="margin-top: 5px; color: #888;">Click a file above to view details</div>
         `;
+    } else {
+        fileListDiv.style.display = 'none';
+    }
 
-        // Show buttons and visualization
-        document.getElementById('applyBtns').style.display = 'flex';
-        document.getElementById('loadedAudioVizContainer').style.display = 'block';
-        drawLoadedAudioWaveform(audioData, sampleRate);
-
-    } catch (err) {
-        resultDiv.innerHTML = `<span style="color: #ff4444;">Error: ${err.message}</span>`;
-        console.error('Analysis error:', err);
+    // Select first valid result
+    const firstValid = allAnalysisResults.findIndex(r => !r.error);
+    if (firstValid >= 0) {
+        selectAnalysisResult(firstValid);
     }
 
     event.target.value = '';
+}
+
+// Select a specific analysis result
+function selectAnalysisResult(index) {
+    const result = allAnalysisResults[index];
+    if (!result || result.error) return;
+
+    selectedResultIndex = index;
+
+    // Update selection highlight
+    document.querySelectorAll('.file-item').forEach((el, i) => {
+        el.style.background = i === index ? '#333' : 'transparent';
+    });
+
+    // Update current buffers and params
+    loadedAudioBuffer = result.audioBuffer;
+    analyzedParams = result.params;
+
+    // Update display for single file mode or show selected file details
+    const resultDiv = document.getElementById('analysisResult');
+
+    if (allAnalysisResults.length === 1) {
+        // Single file - show full details
+        resultDiv.innerHTML = `
+            <div style="color: #00ff88; font-weight: bold;">Detected: ${result.detectedNote} (${result.frequency.toFixed(1)} Hz)</div>
+            <div style="color: ${result.onPan ? '#00ff88' : '#ff6644'};">
+                ${result.onPan ? 'On tenor pan' : 'Not on tenor pan'}
+            </div>
+            <div style="margin-top: 5px;">
+                <strong>Envelope:</strong> A=${result.params.attack}ms D=${result.params.decay}ms S=${result.params.sustain}% R=${result.params.release}ms
+            </div>
+            <div>
+                <strong>Harmonics:</strong> Sub=${result.params.subBass}% H2=${result.params.harm2}% H3=${result.params.harm3}% H4=${result.params.harm4}%
+            </div>
+            <div>
+                <strong>Character:</strong> Filter=${result.params.filter}Hz Bright=${result.params.brightness}%
+            </div>
+        `;
+    } else {
+        // Multiple files - show summary + selected file details
+        const validResults = allAnalysisResults.filter(r => !r.error);
+        const onPanCount = validResults.filter(r => r.onPan).length;
+        resultDiv.innerHTML = `
+            <div style="color: #FFD700; font-weight: bold;">Analyzed ${validResults.length} files (${onPanCount} on pan)</div>
+            <div style="margin-top: 5px; padding: 5px; background: #222; border-radius: 4px;">
+                <div style="color: #00ff88;"><strong>${result.filename}</strong></div>
+                <div>${result.detectedNote} (${result.frequency.toFixed(1)} Hz) - ${result.onPan ? 'On pan' : 'Not on pan'}</div>
+                <div style="font-size: 10px; color: #888;">A=${result.params.attack} D=${result.params.decay} S=${result.params.sustain} R=${result.params.release}</div>
+            </div>
+        `;
+    }
+
+    // Show buttons and visualization
+    document.getElementById('applyBtns').style.display = 'flex';
+    document.getElementById('loadedAudioVizContainer').style.display = 'block';
+    drawLoadedAudioWaveform(result.audioData, result.sampleRate);
+}
+
+// Legacy single file function (calls multi-file with single file)
+async function analyzeAudio(event) {
+    return analyzeMultipleAudio(event);
 }
 
 // Draw loaded audio waveform
