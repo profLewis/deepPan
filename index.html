@@ -123,23 +123,23 @@
             height: 18px;
             cursor: pointer;
         }
-        .viz-container {
-            width: min(650px, 90vw);
-            height: 120px;
-            background: #0a0a0a;
-            border-radius: 10px;
-            margin: 10px 0;
-            display: none;
-            overflow: hidden;
-            border: 1px solid #333;
+        .viz-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 95%;
+            height: 95%;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1;
         }
-        .viz-container.visible {
-            display: block;
-        }
-        .viz-canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
+        .viz-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+            cursor: pointer;
         }
 
         .sequence-input {
@@ -213,6 +213,7 @@
     </div>
 
     <div class="pan-container">
+        <canvas class="viz-overlay" id="vizCanvas" onclick="cycleVizMode()" title="Click visualization to change mode"></canvas>
         <svg viewBox="-20 -20 40 40" id="panSvg">
             <defs>
                 <radialGradient id="bowlGradient" cx="30%" cy="30%">
@@ -241,9 +242,7 @@
         <input type="checkbox" id="vizMode" onchange="toggleViz()">
         <label for="vizMode">Show visualization</label>
     </div>
-    <div class="viz-container" id="vizContainer">
-        <canvas class="viz-canvas" id="vizCanvas" onclick="cycleVizMode()" style="cursor:pointer" title="Click to change visualization"></canvas>
-    </div>
+
     <p class="instructions" id="instructions">Hover over any note to hear its sound</p>
     <p class="credit">Geometry from 3D model | <a href="https://github.com/profLewis/deepPan" target="_blank">GitHub</a></p>
 
@@ -276,8 +275,8 @@
 
         function toggleViz() {
             vizEnabled = document.getElementById('vizMode').checked;
-            const container = document.getElementById('vizContainer');
-            container.classList.toggle('visible', vizEnabled);
+            const canvas = document.getElementById('vizCanvas');
+            canvas.classList.toggle('visible', vizEnabled);
             
             if (vizEnabled) {
                 initAudioContext();
@@ -348,9 +347,19 @@
             ctx.scale(dpr, dpr);
             const width = rect.width;
             const height = rect.height;
+            const radius = Math.min(width, height) / 2;
             
-            // Fade background
-            ctx.fillStyle = 'rgba(10, 10, 10, 0.15)';
+            // Clear with transparency
+            ctx.clearRect(0, 0, width, height);
+            
+            // Clip to circle
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(width/2, height/2, radius * 0.95, 0, Math.PI * 2);
+            ctx.clip();
+            
+            // Semi-transparent background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, width, height);
             
             if (!analyser) {
@@ -508,11 +517,15 @@
                 return false;
             });
             
-            // Mode indicator
+            // Restore from clip
+            ctx.restore();
+            
+            // Mode indicator (outside clip)
             const modeNames = ['Wave', 'Bars', 'Spiral', 'Scope'];
-            ctx.fillStyle = '#666';
-            ctx.font = '10px sans-serif';
-            ctx.fillText(modeNames[vizMode] + ' (click to change)', 10, height - 8);
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(modeNames[vizMode], width/2, height - 8);
             
             vizAnimFrame = requestAnimationFrame(drawViz);
         }
