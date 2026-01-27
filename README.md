@@ -170,6 +170,7 @@ python -m http.server 8000
 - Keyboard shortcuts: QWERTY row = Central ring, ASDF row = Outer ring, ZXCV row = Inner ring
 - Sequence player for entering melodies
 - **CLI command display** shows the equivalent `generate_sounds.py` command
+- **Audio analysis**: Load a WAV file to extract synthesis parameters and match the sound
 
 **Parameters:**
 
@@ -245,6 +246,34 @@ python synth_pygame.py
 - Visual ADSR envelope and harmonic spectrum displays
 - All the same parameters as synth.html
 
+### Audio Analysis (`analyze_audio.py`)
+
+Analyze WAV files to extract synthesis parameters that match the sound.
+
+```bash
+# Analyze a steel pan sample
+python analyze_audio.py sample.wav
+
+# Save extracted parameters to JSON
+python analyze_audio.py sample.wav --output params.json
+
+# Output as JSON only
+python analyze_audio.py sample.wav --json
+```
+
+**What it detects:**
+- Note pitch (fundamental frequency)
+- ADSR envelope shape (attack, decay, sustain, release)
+- Harmonic content (relative amplitudes of partials)
+- Filter cutoff and brightness characteristics
+
+**Workflow:**
+1. Find or record a steel pan sound you like
+2. Analyze it: `python analyze_audio.py my_sample.wav -o my_params.json`
+3. Generate matching sounds: `python generate_sounds.py --params-file my_params.json`
+
+Example steel pan samples available at [Free Wave Samples](https://freewavesamples.com/instrument/steel-drums) and [Freesound](https://freesound.org/search/?q=steel+pan).
+
 ## File Structure
 
 ```
@@ -255,12 +284,14 @@ deepPan/
 │   └── notepads/             # Note pad STL/OBJ
 ├── sounds/                   # Synthesized audio samples
 │   └── params.json           # Parameters used for generation
+├── samples/                  # Example audio samples for analysis
 ├── docs/                     # Documentation images
 ├── generate_notepad.py       # Note pad generator
 ├── generate_mount_base.py    # Mount base generator
 ├── generate_outer_sleeve.py  # Outer sleeve generator
 ├── generate_diagram.py       # Layout diagram generator
 ├── generate_sounds.py        # Sound synthesis CLI
+├── analyze_audio.py          # Audio analysis tool
 ├── generate_interactive.py   # Interactive HTML generator
 ├── index.html                # Interactive pan player
 ├── synth.html                # Sound design tool (browser)

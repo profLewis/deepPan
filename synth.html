@@ -498,6 +498,24 @@
                 </div>
                 <div class="file-status" id="fileStatus"></div>
             </div>
+
+            <div class="cli-section">
+                <h3>Analyze Audio Sample</h3>
+                <p style="font-size: 11px; color: #888; margin-bottom: 10px;">Load a WAV file to extract synthesis parameters</p>
+                <div class="file-btns">
+                    <button class="file-btn load" onclick="document.getElementById('audioFile').click()" style="background: #8e44ad;">Analyze WAV</button>
+                    <input type="file" id="audioFile" class="file-input" accept=".wav,audio/wav" onchange="analyzeAudio(event)">
+                </div>
+                <div id="analysisResult" style="margin-top: 10px; font-size: 11px; color: #aaa;"></div>
+                <div class="viz-container" style="margin-top: 10px; display: none;" id="loadedAudioVizContainer">
+                    <div class="viz-label">Loaded Audio Waveform</div>
+                    <canvas class="viz-canvas" id="loadedAudioViz"></canvas>
+                </div>
+                <div class="file-btns" style="margin-top: 10px; display: none;" id="applyBtns">
+                    <button class="file-btn" onclick="applyAnalyzedParams()" style="background: #27ae60;">Apply to Synth</button>
+                    <button class="file-btn" onclick="playLoadedAudio()" style="background: #2980b9;">Play Original</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1425,6 +1443,412 @@ function setup() {
     document.getElementById('sequenceInput').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') playSequence();
     });
+}
+
+// =========================================
+// AUDIO ANALYSIS FUNCTIONS
+// =========================================
+
+let loadedAudioBuffer = null;
+let analyzedParams = null;
+
+// Tenor pan notes for matching
+const TENOR_PAN_NOTES = [
+    'F#4', 'B4', 'E4', 'A4', 'D4', 'G4', 'C4', 'F4', 'Bb4', 'Eb4', 'Ab4', 'C#4',
+    'F#5', 'B5', 'E5', 'A5', 'D5', 'G5', 'C5', 'F5', 'Bb5', 'Eb5', 'Ab5', 'C#5',
+    'C#6', 'E6', 'D6', 'C6', 'Eb6'
+];
+
+// Convert frequency to note name
+function freqToNote(freq) {
+    if (freq <= 0) return { note: 'Unknown', octave: 0 };
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const midiNote = Math.round(69 + 12 * Math.log2(freq / 440));
+    const octave = Math.floor(midiNote / 12) - 1;
+    const noteIdx = midiNote % 12;
+    return { note: noteNames[noteIdx], octave: octave };
+}
+
+// Detect pitch using autocorrelation
+function detectPitchAutocorr(audioData, sampleRate) {
+    const minFreq = 50, maxFreq = 2000;
+    const segStart = Math.floor(0.05 * sampleRate);
+    const segLength = Math.floor(0.2 * sampleRate);
+    const segEnd = Math.min(segStart + segLength, audioData.length);
+
+    if (segEnd <= segStart) return 0;
+
+    const segment = audioData.slice(segStart, segEnd);
+    const n = segment.length;
+
+    // Normalize
+    let mean = 0;
+    for (let i = 0; i < n; i++) mean += segment[i];
+    mean /= n;
+    for (let i = 0; i < n; i++) segment[i] -= mean;
+
+    // Autocorrelation
+    const minLag = Math.floor(sampleRate / maxFreq);
+    const maxLag = Math.floor(sampleRate / minFreq);
+
+    let maxCorr = 0, bestLag = 0;
+    for (let lag = minLag; lag < Math.min(maxLag, n); lag++) {
+        let corr = 0;
+        for (let i = 0; i < n - lag; i++) {
+            corr += segment[i] * segment[i + lag];
+        }
+        if (corr > maxCorr) {
+            maxCorr = corr;
+            bestLag = lag;
+        }
+    }
+
+    return bestLag > 0 ? sampleRate / bestLag : 0;
+}
+
+// Detect pitch using FFT
+function detectPitchFFT(audioData, sampleRate) {
+    const minFreq = 50, maxFreq = 2000;
+    const segStart = Math.floor(0.05 * sampleRate);
+    const segLength = Math.min(8192, audioData.length - segStart);
+
+    if (segLength <= 0) return 0;
+
+    const segment = audioData.slice(segStart, segStart + segLength);
+    const n = segment.length;
+
+    // Apply Hanning window
+    for (let i = 0; i < n; i++) {
+        segment[i] *= 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
+    }
+
+    // Simple DFT for relevant frequencies (faster than full FFT for our needs)
+    const numBins = 512;
+    const spectrum = new Float32Array(numBins);
+
+    for (let k = 0; k < numBins; k++) {
+        const freq = k * sampleRate / n;
+        if (freq < minFreq || freq > maxFreq) continue;
+
+        let real = 0, imag = 0;
+        for (let i = 0; i < n; i++) {
+            const angle = 2 * Math.PI * k * i / n;
+            real += segment[i] * Math.cos(angle);
+            imag -= segment[i] * Math.sin(angle);
+        }
+        spectrum[k] = Math.sqrt(real * real + imag * imag);
+    }
+
+    // Find peak
+    let maxVal = 0, peakBin = 0;
+    for (let k = 0; k < numBins; k++) {
+        const freq = k * sampleRate / n;
+        if (freq >= minFreq && freq <= maxFreq && spectrum[k] > maxVal) {
+            maxVal = spectrum[k];
+            peakBin = k;
+        }
+    }
+
+    return peakBin * sampleRate / n;
+}
+
+// Analyze harmonics
+function analyzeHarmonics(audioData, sampleRate, fundamentalFreq) {
+    const segStart = Math.floor(0.1 * sampleRate);
+    const segLength = Math.min(8192, audioData.length - segStart);
+    if (segLength <= 0) return { sub_bass: 20, fundamental: 100, harmonic2: 30, harmonic3: 10, harmonic4: 5 };
+
+    const segment = audioData.slice(segStart, segStart + segLength);
+    const n = segment.length;
+
+    // Apply window
+    for (let i = 0; i < n; i++) {
+        segment[i] *= 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
+    }
+
+    // Measure amplitude at each harmonic frequency
+    function measureAmp(targetFreq) {
+        const k = Math.round(targetFreq * n / sampleRate);
+        let real = 0, imag = 0;
+        for (let i = 0; i < n; i++) {
+            const angle = 2 * Math.PI * k * i / n;
+            real += segment[i] * Math.cos(angle);
+            imag -= segment[i] * Math.sin(angle);
+        }
+        return Math.sqrt(real * real + imag * imag);
+    }
+
+    const fundAmp = measureAmp(fundamentalFreq);
+    if (fundAmp === 0) return { sub_bass: 20, fundamental: 100, harmonic2: 30, harmonic3: 10, harmonic4: 5 };
+
+    return {
+        sub_bass: Math.min(100, Math.round(measureAmp(fundamentalFreq * 0.5) / fundAmp * 100)),
+        fundamental: 100,
+        harmonic2: Math.min(100, Math.round(measureAmp(fundamentalFreq * 2) / fundAmp * 100)),
+        harmonic3: Math.min(100, Math.round(measureAmp(fundamentalFreq * 3) / fundAmp * 100)),
+        harmonic4: Math.min(100, Math.round(measureAmp(fundamentalFreq * 4) / fundAmp * 100))
+    };
+}
+
+// Analyze envelope
+function analyzeEnvelope(audioData, sampleRate) {
+    // Get amplitude envelope
+    const windowSize = Math.floor(0.01 * sampleRate);
+    const envelope = [];
+
+    for (let i = 0; i < audioData.length; i += windowSize) {
+        let sum = 0;
+        for (let j = i; j < Math.min(i + windowSize, audioData.length); j++) {
+            sum += Math.abs(audioData[j]);
+        }
+        envelope.push(sum / windowSize);
+    }
+
+    // Normalize
+    const maxEnv = Math.max(...envelope);
+    if (maxEnv > 0) {
+        for (let i = 0; i < envelope.length; i++) envelope[i] /= maxEnv;
+    }
+
+    // Find attack (time to 90% of peak)
+    const peakIdx = envelope.indexOf(Math.max(...envelope));
+    let attackIdx = 0;
+    for (let i = 0; i < peakIdx; i++) {
+        if (envelope[i] >= 0.9) { attackIdx = i; break; }
+    }
+    const attackMs = (attackIdx * windowSize / sampleRate) * 1000;
+
+    // Find sustain level
+    const sustainStart = Math.floor(envelope.length * 0.3);
+    const sustainEnd = Math.floor(envelope.length * 0.6);
+    let sustainSum = 0;
+    for (let i = sustainStart; i < sustainEnd; i++) sustainSum += envelope[i];
+    const sustainLevel = sustainSum / (sustainEnd - sustainStart) || 0.2;
+
+    // Find decay
+    let decayIdx = peakIdx;
+    for (let i = peakIdx; i < envelope.length; i++) {
+        if (envelope[i] <= sustainLevel * 1.1) { decayIdx = i; break; }
+    }
+    const decayMs = ((decayIdx - peakIdx) * windowSize / sampleRate) * 1000;
+
+    // Find release
+    const releaseStart = Math.floor(envelope.length * 0.7);
+    const threshold = envelope[releaseStart] * 0.1;
+    let releaseIdx = envelope.length;
+    for (let i = releaseStart; i < envelope.length; i++) {
+        if (envelope[i] <= threshold) { releaseIdx = i; break; }
+    }
+    const releaseMs = ((releaseIdx - releaseStart) * windowSize / sampleRate) * 1000;
+
+    return {
+        attack: Math.max(1, Math.min(200, Math.round(attackMs))),
+        decay: Math.max(50, Math.min(2000, Math.round(decayMs))),
+        sustain: Math.max(0, Math.min(100, Math.round(sustainLevel * 100))),
+        release: Math.max(50, Math.min(2000, Math.round(releaseMs)))
+    };
+}
+
+// Estimate filter/brightness
+function estimateFilterBrightness(audioData, sampleRate, fundamentalFreq) {
+    const n = Math.min(8192, audioData.length);
+    const segment = audioData.slice(0, n);
+
+    // Apply window
+    for (let i = 0; i < n; i++) {
+        segment[i] *= 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
+    }
+
+    // Calculate spectral centroid
+    let sumWeighted = 0, sumAmp = 0;
+    for (let k = 1; k < n / 2; k++) {
+        const freq = k * sampleRate / n;
+        let real = 0, imag = 0;
+        for (let i = 0; i < n; i++) {
+            const angle = 2 * Math.PI * k * i / n;
+            real += segment[i] * Math.cos(angle);
+            imag -= segment[i] * Math.sin(angle);
+        }
+        const amp = Math.sqrt(real * real + imag * imag);
+        sumWeighted += freq * amp;
+        sumAmp += amp;
+    }
+    const centroid = sumAmp > 0 ? sumWeighted / sumAmp : 1000;
+
+    // Map to filter and brightness
+    const filterCutoff = Math.max(500, Math.min(10000, Math.round(centroid * 3)));
+    const brightnessRatio = fundamentalFreq > 0 ? centroid / fundamentalFreq : 2;
+    const brightness = Math.max(0, Math.min(100, Math.round((brightnessRatio - 1) * 25 + 50)));
+
+    return { filter: filterCutoff, brightness: brightness };
+}
+
+// Main analysis function
+async function analyzeAudio(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    initAudio();
+
+    const resultDiv = document.getElementById('analysisResult');
+    resultDiv.innerHTML = '<span style="color: #FFD700;">Analyzing...</span>';
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        loadedAudioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        // Get mono audio data
+        const audioData = loadedAudioBuffer.getChannelData(0);
+        const sampleRate = loadedAudioBuffer.sampleRate;
+
+        // Detect pitch
+        const freqAuto = detectPitchAutocorr(Float32Array.from(audioData), sampleRate);
+        const freqFFT = detectPitchFFT(Float32Array.from(audioData), sampleRate);
+        const freq = Math.abs(freqFFT - freqAuto) > freqAuto * 0.1 ? freqFFT : (freqAuto + freqFFT) / 2;
+
+        const { note, octave } = freqToNote(freq);
+        const detectedNote = `${note}${octave}`;
+
+        // Check if on pan
+        const onPan = TENOR_PAN_NOTES.includes(detectedNote) ||
+                      TENOR_PAN_NOTES.includes(detectedNote.replace('#', 'b'));
+
+        // Analyze components
+        const harmonics = analyzeHarmonics(Float32Array.from(audioData), sampleRate, freq);
+        const envelope = analyzeEnvelope(Float32Array.from(audioData), sampleRate);
+        const filterBright = estimateFilterBrightness(Float32Array.from(audioData), sampleRate, freq);
+
+        // Store analyzed params
+        analyzedParams = {
+            attack: envelope.attack,
+            decay: envelope.decay,
+            sustain: envelope.sustain,
+            release: envelope.release,
+            fundamental: harmonics.fundamental,
+            harm2: harmonics.harmonic2,
+            harm3: harmonics.harmonic3,
+            harm4: harmonics.harmonic4,
+            subBass: harmonics.sub_bass,
+            detune: 2,
+            filter: filterBright.filter,
+            brightness: filterBright.brightness,
+            duration: audioData.length / sampleRate,
+            volume: 85
+        };
+
+        // Display results
+        resultDiv.innerHTML = `
+            <div style="color: #00ff88; font-weight: bold;">Detected: ${detectedNote} (${freq.toFixed(1)} Hz)</div>
+            <div style="color: ${onPan ? '#00ff88' : '#ff6644'};">
+                ${onPan ? 'On tenor pan' : 'Not on tenor pan'}
+            </div>
+            <div style="margin-top: 5px;">
+                <strong>Envelope:</strong> A=${envelope.attack}ms D=${envelope.decay}ms S=${envelope.sustain}% R=${envelope.release}ms
+            </div>
+            <div>
+                <strong>Harmonics:</strong> Sub=${harmonics.sub_bass}% H2=${harmonics.harmonic2}% H3=${harmonics.harmonic3}% H4=${harmonics.harmonic4}%
+            </div>
+            <div>
+                <strong>Character:</strong> Filter=${filterBright.filter}Hz Bright=${filterBright.brightness}%
+            </div>
+        `;
+
+        // Show buttons and visualization
+        document.getElementById('applyBtns').style.display = 'flex';
+        document.getElementById('loadedAudioVizContainer').style.display = 'block';
+        drawLoadedAudioWaveform(audioData, sampleRate);
+
+    } catch (err) {
+        resultDiv.innerHTML = `<span style="color: #ff4444;">Error: ${err.message}</span>`;
+        console.error('Analysis error:', err);
+    }
+
+    event.target.value = '';
+}
+
+// Draw loaded audio waveform
+function drawLoadedAudioWaveform(audioData, sampleRate) {
+    const canvas = document.getElementById('loadedAudioViz');
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const width = rect.width;
+    const height = rect.height;
+
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw waveform
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+
+    const step = Math.ceil(audioData.length / width);
+    for (let i = 0; i < width; i++) {
+        const idx = i * step;
+        let min = 1, max = -1;
+        for (let j = 0; j < step && idx + j < audioData.length; j++) {
+            const val = audioData[idx + j];
+            if (val < min) min = val;
+            if (val > max) max = val;
+        }
+        const y1 = (1 - max) * height / 2;
+        const y2 = (1 - min) * height / 2;
+        ctx.moveTo(i, y1);
+        ctx.lineTo(i, y2);
+    }
+    ctx.stroke();
+}
+
+// Apply analyzed parameters to synth
+function applyAnalyzedParams() {
+    if (!analyzedParams) return;
+
+    const paramMap = {
+        attack: 'attack', decay: 'decay', sustain: 'sustain', release: 'release',
+        fundamental: 'fundamental', harm2: 'harm2', harm3: 'harm3', harm4: 'harm4',
+        subBass: 'subBass', detune: 'detune', filter: 'filter', brightness: 'brightness',
+        volume: 'volume'
+    };
+
+    for (const [key, sliderId] of Object.entries(paramMap)) {
+        const slider = document.getElementById(sliderId);
+        if (slider && analyzedParams[key] !== undefined) {
+            slider.value = analyzedParams[key];
+            updateSliderDisplay(sliderId);
+        }
+    }
+
+    // Duration
+    const durationSlider = document.getElementById('duration');
+    if (durationSlider && analyzedParams.duration) {
+        durationSlider.value = Math.min(3, Math.max(0.5, analyzedParams.duration));
+        updateSliderDisplay('duration');
+    }
+
+    validateADSR();
+    updateCLICommand();
+    updateStaticViz();
+
+    document.getElementById('fileStatus').textContent = 'Parameters applied from analysis';
+    setTimeout(() => document.getElementById('fileStatus').textContent = '', 3000);
+}
+
+// Play loaded audio
+function playLoadedAudio() {
+    if (!loadedAudioBuffer || !audioCtx) return;
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = loadedAudioBuffer;
+    source.connect(audioCtx.destination);
+    source.start();
 }
 
 // Initialize
