@@ -326,6 +326,7 @@ Examples:
     python generate_sounds.py --attack 5 --decay 300  # Custom envelope
     python generate_sounds.py C4                   # Single note
     python generate_sounds.py --list-params        # Show all parameters
+    python generate_sounds.py --params-file my_sound.json  # Load from file
         """
     )
 
@@ -335,6 +336,8 @@ Examples:
     # Preset
     parser.add_argument('--preset', choices=PRESETS.keys(),
                         help='Use a preset configuration')
+    parser.add_argument('--params-file', metavar='FILE',
+                        help='Load parameters from JSON file (e.g., from synth_pygame.py)')
 
     # Envelope parameters
     parser.add_argument('--attack', type=int, metavar='MS',
@@ -410,7 +413,32 @@ Examples:
         return
 
     # Build parameters
-    if args.preset:
+    if args.params_file:
+        try:
+            with open(args.params_file, 'r') as f:
+                loaded = json.load(f)
+            params = DEFAULT_PARAMS.copy()
+            # Map JSON keys to our param names (handle both formats)
+            key_map = {
+                'sub_bass': 'sub_bass',
+                'subBass': 'sub_bass',
+                'harmonic2': 'harmonic2',
+                'harm2': 'harmonic2',
+                'harmonic3': 'harmonic3',
+                'harm3': 'harmonic3',
+                'harmonic4': 'harmonic4',
+                'harm4': 'harmonic4',
+            }
+            for key, value in loaded.items():
+                mapped_key = key_map.get(key, key)
+                if mapped_key in params:
+                    params[mapped_key] = value
+            if not args.quiet:
+                print(f"Loaded parameters from: {args.params_file}")
+        except Exception as e:
+            print(f"Error loading params file: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.preset:
         params = PRESETS[args.preset].copy()
     else:
         params = DEFAULT_PARAMS.copy()

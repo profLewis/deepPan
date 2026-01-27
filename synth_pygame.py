@@ -16,6 +16,9 @@ Controls:
 import pygame
 import numpy as np
 import sys
+import json
+from tkinter import filedialog
+import tkinter as tk
 
 # Initialize pygame
 pygame.init()
@@ -37,6 +40,8 @@ BUTTON_OUTER = (192, 57, 43)
 BUTTON_CENTRAL = (36, 113, 163)
 BUTTON_INNER = (30, 132, 73)
 BUTTON_RESET = (100, 100, 100)
+BUTTON_SAVE = (46, 134, 193)
+BUTTON_LOAD = (39, 174, 96)
 WHITE = (255, 255, 255)
 
 # Fonts
@@ -395,6 +400,51 @@ def draw_harmonic_preview(surface, x, y, width, height):
         surface.blit(label, label_rect)
 
 
+def save_params_to_file():
+    """Save current parameters to a JSON file."""
+    # Hide the root tkinter window
+    root = tk.Tk()
+    root.withdraw()
+    
+    filepath = filedialog.asksaveasfilename(
+        defaultextension=".json",
+        filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        title="Save Parameters"
+    )
+    root.destroy()
+    
+    if filepath:
+        with open(filepath, 'w') as f:
+            json.dump(params, f, indent=2)
+        return filepath
+    return None
+
+
+def load_params_from_file():
+    """Load parameters from a JSON file."""
+    root = tk.Tk()
+    root.withdraw()
+    
+    filepath = filedialog.askopenfilename(
+        filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        title="Load Parameters"
+    )
+    root.destroy()
+    
+    if filepath:
+        try:
+            with open(filepath, 'r') as f:
+                loaded = json.load(f)
+            # Update only valid keys
+            for key in params:
+                if key in loaded:
+                    params[key] = loaded[key]
+            return filepath
+        except Exception as e:
+            print(f"Error loading file: {e}")
+    return None
+
+
 def main():
     clock = pygame.time.Clock()
 
@@ -429,6 +479,8 @@ def main():
         buttons.append(NoteButton(idx, note, octave, x, y, 'inner'))
 
     current_note = None
+    status_msg = ""
+    status_time = 0
     running = True
 
     while running:
@@ -458,11 +510,36 @@ def main():
                     params.update(PRESETS['pluck'])
                 elif event.key == pygame.K_0 or event.key == pygame.K_r:
                     params.update(PRESETS['default'])
+                elif event.key == pygame.K_s and (event.mod & pygame.KMOD_CTRL or event.mod & pygame.KMOD_META):
+                    saved = save_params_to_file()
+                    if saved:
+                        status_msg = f"Saved: {saved.split('/')[-1]}"
+                        status_time = pygame.time.get_ticks()
+                elif event.key == pygame.K_l and (event.mod & pygame.KMOD_CTRL or event.mod & pygame.KMOD_META):
+                    loaded = load_params_from_file()
+                    if loaded:
+                        status_msg = f"Loaded: {loaded.split('/')[-1]}"
+                        status_time = pygame.time.get_ticks()
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                # Check reset button
-                reset_rect = pygame.Rect(30, 560, 80, 30)
+                # Check reset/save/load buttons
+                reset_rect = pygame.Rect(30, 560, 70, 30)
+                save_rect = pygame.Rect(110, 560, 70, 30)
+                load_rect = pygame.Rect(190, 560, 70, 30)
+                
                 if reset_rect.collidepoint(event.pos):
                     params.update(PRESETS['default'])
+                    status_msg = "Reset to defaults"
+                    status_time = pygame.time.get_ticks()
+                elif save_rect.collidepoint(event.pos):
+                    saved = save_params_to_file()
+                    if saved:
+                        status_msg = f"Saved: {saved.split('/')[-1]}"
+                        status_time = pygame.time.get_ticks()
+                elif load_rect.collidepoint(event.pos):
+                    loaded = load_params_from_file()
+                    if loaded:
+                        status_msg = f"Loaded: {loaded.split('/')[-1]}"
+                        status_time = pygame.time.get_ticks()
                 
                 for btn in buttons:
                     if btn.contains(event.pos):
@@ -518,15 +595,30 @@ def main():
         for slider in sliders:
             slider.draw(screen)
 
-        # Reset button
-        reset_rect = pygame.Rect(30, 560, 80, 30)
+        # Reset/Save/Load buttons
+        reset_rect = pygame.Rect(30, 560, 70, 30)
+        save_rect = pygame.Rect(110, 560, 70, 30)
+        load_rect = pygame.Rect(190, 560, 70, 30)
+        
         pygame.draw.rect(screen, BUTTON_RESET, reset_rect, border_radius=5)
         reset_text = font_medium.render("Reset", True, WHITE)
-        reset_text_rect = reset_text.get_rect(center=reset_rect.center)
-        screen.blit(reset_text, reset_text_rect)
+        screen.blit(reset_text, reset_text.get_rect(center=reset_rect.center))
+        
+        pygame.draw.rect(screen, BUTTON_SAVE, save_rect, border_radius=5)
+        save_text = font_medium.render("Save", True, WHITE)
+        screen.blit(save_text, save_text.get_rect(center=save_rect.center))
+        
+        pygame.draw.rect(screen, BUTTON_LOAD, load_rect, border_radius=5)
+        load_text = font_medium.render("Load", True, WHITE)
+        screen.blit(load_text, load_text.get_rect(center=load_rect.center))
+        
+        # Status message (show for 3 seconds)
+        if status_msg and pygame.time.get_ticks() - status_time < 3000:
+            status_render = font_small.render(status_msg, True, SLIDER_FG)
+            screen.blit(status_render, (30, 600))
 
         # Instructions
-        inst = font_small.render("Click notes or use keyboard | R=Reset | ESC=Quit", True, LABEL_COLOR)
+        inst = font_small.render("Keyboard: notes | R=Reset | Ctrl+S=Save | Ctrl+L=Load | ESC=Quit", True, LABEL_COLOR)
         screen.blit(inst, (30, HEIGHT - 25))
 
         pygame.display.flip()
