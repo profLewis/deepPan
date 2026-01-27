@@ -210,6 +210,31 @@ python generate_sounds.py --preset pluck     # Short, percussive
 
 The synthesizer and CLI use identical parameters, so you can design sounds in the browser, then regenerate all samples using the CLI command shown.
 
+### Pygame Synthesizer (`synth_pygame.py`)
+
+A native Python application with the same features as the browser version.
+
+**Requirements:**
+```bash
+pip install pygame numpy
+```
+
+**Run:**
+```bash
+python synth_pygame.py
+```
+
+**Controls:**
+- **Mouse**: Click note buttons or drag sliders
+- **Keyboard**: ASDF row = Outer ring, QWERTY row = Central ring, ZXCV row = Inner ring
+- **Presets**: Press 1-5 to load presets
+- **ESC**: Quit
+
+**Features:**
+- Real-time synthesis (no pre-generated samples)
+- Visual ADSR envelope and harmonic spectrum displays
+- All the same parameters as synth.html
+
 ## File Structure
 
 ```
@@ -228,7 +253,8 @@ deepPan/
 ├── generate_sounds.py        # Sound synthesis CLI
 ├── generate_interactive.py   # Interactive HTML generator
 ├── index.html                # Interactive pan player
-├── synth.html                # Sound design tool with sliders
+├── synth.html                # Sound design tool (browser)
+├── synth_pygame.py           # Sound design tool (native Python)
 ├── deepPanPlay               # Command-line melody player
 └── README.md
 ```

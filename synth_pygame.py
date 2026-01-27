@@ -36,6 +36,7 @@ LABEL_COLOR = (150, 150, 150)
 BUTTON_OUTER = (192, 57, 43)
 BUTTON_CENTRAL = (36, 113, 163)
 BUTTON_INNER = (30, 132, 73)
+BUTTON_RESET = (100, 100, 100)
 WHITE = (255, 255, 255)
 
 # Fonts
@@ -455,7 +456,14 @@ def main():
                     params.update(PRESETS['bell'])
                 elif event.key == pygame.K_5:
                     params.update(PRESETS['pluck'])
+                elif event.key == pygame.K_0 or event.key == pygame.K_r:
+                    params.update(PRESETS['default'])
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                # Check reset button
+                reset_rect = pygame.Rect(30, 560, 80, 30)
+                if reset_rect.collidepoint(event.pos):
+                    params.update(PRESETS['default'])
+                
                 for btn in buttons:
                     if btn.contains(event.pos):
                         play_note(btn.note, btn.octave)
@@ -510,8 +518,15 @@ def main():
         for slider in sliders:
             slider.draw(screen)
 
+        # Reset button
+        reset_rect = pygame.Rect(30, 560, 80, 30)
+        pygame.draw.rect(screen, BUTTON_RESET, reset_rect, border_radius=5)
+        reset_text = font_medium.render("Reset", True, WHITE)
+        reset_text_rect = reset_text.get_rect(center=reset_rect.center)
+        screen.blit(reset_text, reset_text_rect)
+
         # Instructions
-        inst = font_small.render("Click notes or use keyboard | ESC to quit", True, LABEL_COLOR)
+        inst = font_small.render("Click notes or use keyboard | R=Reset | ESC=Quit", True, LABEL_COLOR)
         screen.blit(inst, (30, HEIGHT - 25))
 
         pygame.display.flip()
