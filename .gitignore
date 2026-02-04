@@ -22,3 +22,9 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Downloaded samples
+urbanpan_samples/
+
+# Generated MIDI
+*.mid

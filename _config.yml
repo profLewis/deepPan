@@ -1,0 +1,20 @@
+theme: jekyll-theme-cayman
+title: deepPan
+description: 3D printable tenor steel pan with interactive sound design tools
+baseurl: /deepPan
+url: https://proflewis.github.io
+
+exclude:
+  - "*.py"
+  - "*.ipynb"
+  - "*.mid"
+  - deepPanPlay
+  - data/
+  - samples/
+  - urbanpan_samples/
+  - __pycache__/
+  - CLAUDE_SESSION.md
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - midi_sampler.py
