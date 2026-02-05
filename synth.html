@@ -613,12 +613,78 @@ const PRESETS = {
     }
 };
 
+// Per-note calibration data from real steel pan samples
+const calibration = {"notes":{"53":{"freq":176.2,"attack":3,"decay":1402,"sustain":1,"release":1804,"sub_bass":0,"fundamental":100,"harmonic2":69,"harmonic3":2,"harmonic4":15,"filter":2626,"brightness":100},"54":{"freq":186.0,"attack":20,"decay":1173,"sustain":1,"release":1503,"sub_bass":0,"fundamental":100,"harmonic2":100,"harmonic3":0,"harmonic4":46,"filter":1487,"brightness":100},"55":{"freq":197.2,"attack":5,"decay":1367,"sustain":1,"release":1201,"sub_bass":0,"fundamental":100,"harmonic2":100,"harmonic3":2,"harmonic4":18,"filter":1030,"brightness":100},"56":{"freq":210.0,"attack":5,"decay":1078,"sustain":0,"release":2000,"sub_bass":0,"fundamental":100,"harmonic2":100,"harmonic3":17,"harmonic4":58,"filter":2465,"brightness":100},"57":{"freq":220.2,"attack":7,"decay":1637,"sustain":0,"release":1510,"sub_bass":0,"fundamental":100,"harmonic2":100,"harmonic3":11,"harmonic4":11,"filter":10000,"brightness":100},"58":{"freq":236.2,"attack":8,"decay":1510,"sustain":0,"release":566,"sub_bass":0,"fundamental":100,"harmonic2":22,"harmonic3":33,"harmonic4":3,"filter":1471,"brightness":100},"59":{"freq":247.2,"attack":11,"decay":1707,"sustain":0,"release":2000,"sub_bass":0,"fundamental":100,"harmonic2":29,"harmonic3":37,"harmonic4":1,"filter":5804,"brightness":100},"60":{"freq":262.9,"attack":26,"decay":812,"sustain":0,"release":1812,"sub_bass":0,"fundamental":100,"harmonic2":4,"harmonic3":1,"harmonic4":1,"filter":8029,"brightness":100},"61":{"freq":277.4,"attack":29,"decay":548,"sustain":0,"release":1216,"sub_bass":0,"fundamental":100,"harmonic2":0,"harmonic3":0,"harmonic4":0,"filter":4964,"brightness":100},"62":{"freq":294.0,"attack":8,"decay":1014,"sustain":0,"release":1808,"sub_bass":0,"fundamental":100,"harmonic2":57,"harmonic3":0,"harmonic4":74,"filter":4430,"brightness":100},"63":{"freq":313.0,"attack":6,"decay":1107,"sustain":0,"release":1649,"sub_bass":0,"fundamental":100,"harmonic2":27,"harmonic3":2,"harmonic4":11,"filter":3395,"brightness":100},"64":{"freq":333.7,"attack":86,"decay":786,"sustain":0,"release":1507,"sub_bass":0,"fundamental":100,"harmonic2":100,"harmonic3":13,"harmonic4":87,"filter":2406,"brightness":100},"65":{"freq":350.0,"attack":9,"decay":1480,"sustain":0,"release":1349,"sub_bass":0,"fundamental":100,"harmonic2":28,"harmonic3":0,"harmonic4":27,"filter":1405,"brightness":100},"66":{"freq":370.6,"attack":7,"decay":1640,"sustain":0,"release":1639,"sub_bass":0,"fundamental":100,"harmonic2":19,"harmonic3":0,"harmonic4":7,"filter":3535,"brightness":100},"67":{"freq":393.5,"attack":6,"decay":1068,"sustain":0,"release":1392,"sub_bass":1,"fundamental":100,"harmonic2":54,"harmonic3":0,"harmonic4":19,"filter":4520,"brightness":100},"68":{"freq":416.4,"attack":6,"decay":1365,"sustain":0,"release":712,"sub_bass":26,"fundamental":100,"harmonic2":100,"harmonic3":2,"harmonic4":100,"filter":3885,"brightness":100},"69":{"freq":440.5,"attack":8,"decay":1372,"sustain":0,"release":1534,"sub_bass":5,"fundamental":100,"harmonic2":100,"harmonic3":0,"harmonic4":18,"filter":3892,"brightness":100},"70":{"freq":467.9,"attack":8,"decay":1466,"sustain":0,"release":1726,"sub_bass":5,"fundamental":100,"harmonic2":77,"harmonic3":0,"harmonic4":43,"filter":2752,"brightness":100},"71":{"freq":496.1,"attack":6,"decay":1201,"sustain":0,"release":1527,"sub_bass":6,"fundamental":100,"harmonic2":31,"harmonic3":5,"harmonic4":7,"filter":1999,"brightness":100},"72":{"freq":524.2,"attack":59,"decay":1534,"sustain":0,"release":1891,"sub_bass":8,"fundamental":100,"harmonic2":100,"harmonic3":0,"harmonic4":39,"filter":3572,"brightness":100},"73":{"freq":557.4,"attack":118,"decay":976,"sustain":1,"release":1673,"sub_bass":9,"fundamental":100,"harmonic2":95,"harmonic3":11,"harmonic4":100,"filter":4453,"brightness":100},"74":{"freq":587.3,"attack":7,"decay":972,"sustain":1,"release":1877,"sub_bass":2,"fundamental":100,"harmonic2":45,"harmonic3":0,"harmonic4":10,"filter":6540,"brightness":100},"75":{"freq":622.2,"attack":26,"decay":1029,"sustain":0,"release":1366,"sub_bass":7,"fundamental":100,"harmonic2":49,"harmonic3":5,"harmonic4":50,"filter":2503,"brightness":100},"76":{"freq":657.4,"attack":9,"decay":1287,"sustain":0,"release":688,"sub_bass":8,"fundamental":100,"harmonic2":11,"harmonic3":0,"harmonic4":8,"filter":1949,"brightness":100},"77":{"freq":700.0,"attack":18,"decay":981,"sustain":0,"release":1506,"sub_bass":11,"fundamental":100,"harmonic2":100,"harmonic3":15,"harmonic4":9,"filter":2567,"brightness":100},"78":{"freq":739.2,"attack":6,"decay":1102,"sustain":0,"release":163,"sub_bass":6,"fundamental":100,"harmonic2":47,"harmonic3":1,"harmonic4":4,"filter":4461,"brightness":100},"79":{"freq":785.4,"attack":7,"decay":1021,"sustain":0,"release":1281,"sub_bass":6,"fundamental":100,"harmonic2":50,"harmonic3":2,"harmonic4":9,"filter":3194,"brightness":100},"80":{"freq":831.0,"attack":5,"decay":795,"sustain":1,"release":1261,"sub_bass":13,"fundamental":100,"harmonic2":100,"harmonic3":1,"harmonic4":15,"filter":5479,"brightness":100},"81":{"freq":882.0,"attack":5,"decay":1138,"sustain":0,"release":1342,"sub_bass":3,"fundamental":100,"harmonic2":19,"harmonic3":1,"harmonic4":0,"filter":2870,"brightness":98},"82":{"freq":938.3,"attack":18,"decay":1031,"sustain":0,"release":1367,"sub_bass":10,"fundamental":100,"harmonic2":87,"harmonic3":7,"harmonic4":1,"filter":2253,"brightness":92},"83":{"freq":980.0,"attack":4,"decay":947,"sustain":0,"release":1487,"sub_bass":14,"fundamental":100,"harmonic2":37,"harmonic3":3,"harmonic4":0,"filter":2250,"brightness":89},"84":{"freq":1002.3,"attack":4,"decay":1137,"sustain":1,"release":1495,"sub_bass":13,"fundamental":100,"harmonic2":4,"harmonic3":0,"harmonic4":0,"filter":5675,"brightness":96}},"defaults":{"attack":17,"decay":1177,"sustain":0,"release":1432,"sub_bass":4,"fundamental":100,"harmonic2":58,"harmonic3":5,"harmonic4":24,"filter":3683,"brightness":99,"detune":2}};
+
+// Note name to semitone mapping for MIDI conversion
+const NOTE_SEMITONES = {
+    'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+    'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+    'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
+};
+
+function noteToMidi(name, octave) {
+    const semi = NOTE_SEMITONES[name];
+    return semi !== undefined ? (octave + 1) * 12 + semi : null;
+}
+
+function getCalParams(midi) {
+    const key = String(midi);
+    if (calibration.notes[key]) {
+        return { ...calibration.defaults, ...calibration.notes[key] };
+    }
+    const keys = Object.keys(calibration.notes).map(Number).sort((a, b) => a - b);
+    const below = keys.filter(k => k < midi);
+    const above = keys.filter(k => k > midi);
+    if (below.length && above.length) {
+        const lo = below[below.length - 1];
+        const hi = above[0];
+        const t = (midi - lo) / (hi - lo);
+        const loP = calibration.notes[String(lo)];
+        const hiP = calibration.notes[String(hi)];
+        const result = { ...calibration.defaults };
+        for (const k of ['attack','decay','sustain','release','sub_bass','fundamental','harmonic2','harmonic3','harmonic4','filter','brightness']) {
+            const lv = loP[k] !== undefined ? loP[k] : calibration.defaults[k];
+            const hv = hiP[k] !== undefined ? hiP[k] : calibration.defaults[k];
+            result[k] = Math.round(lv + t * (hv - lv));
+        }
+        return result;
+    }
+    if (below.length) return { ...calibration.defaults, ...calibration.notes[String(below[below.length-1])] };
+    if (above.length) return { ...calibration.defaults, ...calibration.notes[String(above[0])] };
+    return { ...calibration.defaults };
+}
+
+// Create a short buffer of filtered noise for mallet strike transient
+function createNoiseBuffer(duration) {
+    if (!audioCtx) return null;
+    const len = Math.floor(audioCtx.sampleRate * duration);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1);
+    }
+    return buf;
+}
+
+// Create a tanh waveshaper curve for soft limiting
+function createSoftLimiterCurve(samples, drive) {
+    const curve = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) {
+        const x = (i * 2) / samples - 1;
+        curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+    }
+    return curve;
+}
+
 // Audio context and nodes
 let audioCtx = null;
 let convolver = null;
 let masterGain = null;
 let analyser = null;
 let sequenceInterval = null;
+let activeNodes = [];
+const MAX_POLYPHONY = 16;
 
 // Initialize audio context
 function initAudio() {
@@ -805,20 +871,23 @@ function updateCLICommand() {
     document.getElementById('cliCommand').textContent = cmd;
 }
 
-// Play a note
+// Play a note using calibrated per-note synthesis
 function playNote(noteId) {
     initAudio();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const noteData = NOTE_MAP[noteId];
     if (!noteData) return;
 
     const freq = getFrequency(noteData.note, noteData.octave);
-    const params = getParams();
+    const sliderParams = getParams();
+    const midi = noteToMidi(noteData.note, noteData.octave);
+    const calP = midi !== null ? getCalParams(midi) : null;
     const now = audioCtx.currentTime;
 
     // Update display
     document.getElementById('nowPlaying').textContent = `${noteData.note}${noteData.octave}`;
-    document.getElementById('nowPlayingInfo').textContent = `${freq.toFixed(1)} Hz | ${noteId}`;
+    document.getElementById('nowPlayingInfo').textContent = `${freq.toFixed(1)} Hz | ${noteId}${calP ? ' (calibrated)' : ''}`;
 
     // Highlight button
     const btn = document.querySelector(`[data-note="${noteId}"]`);
@@ -827,71 +896,154 @@ function playNote(noteId) {
         setTimeout(() => btn.classList.remove('playing'), 200);
     }
 
-    // Create oscillators for each harmonic
-    const harmonics = [
-        { ratio: 0.5, amp: params.subBass },
-        { ratio: 1.0 - params.detune/1000, amp: params.fundamental * 0.1 },
-        { ratio: 1.0, amp: params.fundamental },
-        { ratio: 1.0 + params.detune/1000, amp: params.fundamental * 0.1 },
-        { ratio: 2.0, amp: params.harm2 },
-        { ratio: 3.0, amp: params.harm3 },
-        { ratio: 4.0, amp: params.harm4 }
-    ];
-
-    // Create a gain node for this note
-    const noteGain = audioCtx.createGain();
-    noteGain.gain.value = 0;
-
-    // Low-pass filter
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = params.filter;
-    filter.Q.value = 0.5;
-
-    noteGain.connect(filter);
-
-    // Brightness (high-shelf filter)
-    if (params.brightness !== 0.5) {
-        const brightFilter = audioCtx.createBiquadFilter();
-        brightFilter.type = 'highshelf';
-        brightFilter.frequency.value = 2000;
-        brightFilter.gain.value = (params.brightness - 0.5) * 12; // -6dB to +6dB
-        filter.connect(brightFilter);
-        brightFilter.connect(masterGain);
-    } else {
-        filter.connect(masterGain);
-    }
-
-    // Update master volume
-    masterGain.gain.value = params.volume;
-
-    // Create oscillators
-    harmonics.forEach(h => {
-        if (h.amp < 0.01) return;
-
-        const osc = audioCtx.createOscillator();
-        const oscGain = audioCtx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.value = freq * h.ratio;
-        oscGain.gain.value = h.amp * 0.3;
-
-        osc.connect(oscGain);
-        oscGain.connect(noteGain);
-
-        osc.start(now);
-        osc.stop(now + params.attack + params.decay + params.release + 0.5);
+    // Clean up finished synth nodes
+    activeNodes = activeNodes.filter(n => {
+        try { return n.endTime > audioCtx.currentTime; } catch(e) { return false; }
     });
 
-    // ADSR envelope
-    const peakTime = now + params.attack;
-    const sustainTime = peakTime + params.decay;
-    const endTime = sustainTime + params.release;
+    // Voice stealing if at polyphony limit
+    if (activeNodes.length >= MAX_POLYPHONY) {
+        const oldest = activeNodes.shift();
+        try {
+            oldest.gain.gain.setValueAtTime(oldest.gain.gain.value, now);
+            oldest.gain.gain.linearRampToValueAtTime(0, now + 0.02);
+            setTimeout(() => {
+                oldest.sources.forEach(s => { try { s.stop(); } catch(e) {} });
+            }, 50);
+        } catch(e) {}
+    }
 
+    // Use calibrated params if available, slider params as fallback
+    const attackTime = calP ? Math.max(calP.attack / 1000, 0.003) : sliderParams.attack;
+    const decayTime = calP ? calP.decay / 1000 : sliderParams.decay;
+    const sustainLevel = calP ? calP.sustain / 100 : sliderParams.sustain;
+    const releaseTime = calP ? Math.min(calP.release / 1000, 2.0) : sliderParams.release;
+    const detune = calP ? (calP.detune || 2) : sliderParams.detune;
+    const filterFreq = calP ? Math.min(calP.filter || 6000, audioCtx.sampleRate / 2 - 100) : sliderParams.filter;
+    const brightness = calP ? (calP.brightness !== undefined ? calP.brightness : 99) : sliderParams.brightness * 100;
+    const duration = 2.5;
+
+    // Voice output chain: noteGain -> lowpass -> highShelf -> limiter -> master
+    const noteGain = audioCtx.createGain();
     noteGain.gain.setValueAtTime(0, now);
-    noteGain.gain.linearRampToValueAtTime(1, peakTime);
-    noteGain.gain.linearRampToValueAtTime(params.sustain, sustainTime);
-    noteGain.gain.linearRampToValueAtTime(0, endTime);
+
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = filterFreq;
+    filter.Q.value = 0.7;
+
+    const brightShelf = audioCtx.createBiquadFilter();
+    brightShelf.type = 'highshelf';
+    brightShelf.frequency.value = 2000;
+    brightShelf.gain.value = (brightness - 50) / 50 * 6; // -6 to +6 dB
+
+    const limiter = audioCtx.createWaveShaper();
+    limiter.curve = createSoftLimiterCurve(4096, 1.2);
+    limiter.oversample = '2x';
+
+    noteGain.connect(filter);
+    filter.connect(brightShelf);
+    brightShelf.connect(limiter);
+    limiter.connect(masterGain);
+
+    // Update master volume
+    masterGain.gain.value = sliderParams.volume;
+
+    const sources = [];
+
+    // Build partials from calibrated data
+    const subBass = calP ? (calP.sub_bass || 0) / 100 : sliderParams.subBass;
+    const fundamental = calP ? (calP.fundamental || 100) / 100 : sliderParams.fundamental;
+    const harm2 = calP ? (calP.harmonic2 || 0) / 100 : sliderParams.harm2;
+    const harm3 = calP ? (calP.harmonic3 || 0) / 100 : sliderParams.harm3;
+    const harm4 = calP ? (calP.harmonic4 || 0) / 100 : sliderParams.harm4;
+
+    const partials = [
+        { ratio: 0.5, amp: subBass, decayMult: 1.0 },
+        { ratio: 1.0 - detune/1000, amp: fundamental * 0.1, decayMult: 1.0 },
+        { ratio: 1.0, amp: fundamental, decayMult: 1.0 },
+        { ratio: 1.0 + detune/1000, amp: fundamental * 0.1, decayMult: 1.0 },
+        { ratio: 2.0, amp: harm2, decayMult: 1.3 },
+        { ratio: 3.0, amp: harm3, decayMult: 1.8 },
+        { ratio: 4.0, amp: harm4, decayMult: 2.2 }
+    ];
+
+    // Create per-partial oscillators with independent ADSR envelopes
+    for (const p of partials) {
+        if (p.amp < 0.01) continue;
+
+        const f = freq * p.ratio;
+        if (f < 30 || f > audioCtx.sampleRate / 2 - 500) continue;
+
+        const osc = audioCtx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+
+        const partialGain = audioCtx.createGain();
+        partialGain.gain.setValueAtTime(0, now);
+
+        const partialDecay = decayTime / p.decayMult;
+        const sustainTau = partialDecay * 2;
+        const endSustain = sustainLevel * Math.exp(-duration / sustainTau);
+
+        // Attack
+        partialGain.gain.linearRampToValueAtTime(p.amp, now + attackTime);
+        // Decay to sustain level
+        partialGain.gain.setTargetAtTime(p.amp * sustainLevel, now + attackTime, partialDecay / 3);
+        // Gradual sustain decay
+        const sustainStart = now + attackTime + partialDecay;
+        partialGain.gain.setTargetAtTime(Math.max(p.amp * endSustain, 0.0001), sustainStart, sustainTau);
+        // Release to zero
+        partialGain.gain.setTargetAtTime(0, now + duration, releaseTime / 5);
+
+        osc.connect(partialGain);
+        partialGain.connect(noteGain);
+        osc.start(now);
+        osc.stop(now + duration + releaseTime + 0.1);
+        sources.push(osc);
+    }
+
+    // Attack bloom: 8ms sine burst at fundamental for percussive transient
+    const bloomDur = 0.008;
+    const bloomOsc = audioCtx.createOscillator();
+    bloomOsc.type = 'sine';
+    bloomOsc.frequency.value = freq;
+    const bloomGain = audioCtx.createGain();
+    bloomGain.gain.setValueAtTime(0.12, now);
+    bloomGain.gain.exponentialRampToValueAtTime(0.001, now + bloomDur);
+    bloomGain.gain.setValueAtTime(0, now + bloomDur + 0.001);
+    bloomOsc.connect(bloomGain);
+    bloomGain.connect(noteGain);
+    bloomOsc.start(now);
+    bloomOsc.stop(now + bloomDur + 0.01);
+    sources.push(bloomOsc);
+
+    // Mallet strike noise: short filtered noise burst
+    const noiseBuf = createNoiseBuffer(0.015);
+    if (noiseBuf) {
+        const noiseSrc = audioCtx.createBufferSource();
+        noiseSrc.buffer = noiseBuf;
+        const noiseFilter = audioCtx.createBiquadFilter();
+        noiseFilter.type = 'bandpass';
+        noiseFilter.frequency.value = Math.min(freq * 3, 8000);
+        noiseFilter.Q.value = 1.5;
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.06, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.012);
+        noiseGain.gain.setValueAtTime(0, now + 0.015);
+        noiseSrc.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(noteGain);
+        noiseSrc.start(now);
+        sources.push(noiseSrc);
+    }
+
+    // Master envelope
+    noteGain.gain.linearRampToValueAtTime(0.8, now + attackTime);
+    noteGain.gain.setValueAtTime(0.8, now + duration);
+    noteGain.gain.setTargetAtTime(0, now + duration, releaseTime / 5);
+
+    activeNodes.push({ gain: noteGain, sources, endTime: now + duration + releaseTime + 0.1 });
 }
 
 // Play note by name (e.g., "C4", "F#5")

@@ -23,6 +23,10 @@ from scipy import signal
 SAMPLE_RATE = 44100
 DURATION = 1.5
 
+CALIBRATION_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "calibration.json"
+)
+
 # Note frequency reference (A4 = 440 Hz)
 NOTE_FREQUENCIES = {
     'C': 261.63, 'C#': 277.18, 'Db': 277.18,
@@ -50,6 +54,97 @@ NOTE_MAP = {
     'O6': ('C', 4, 'outer'), 'O7': ('F', 4, 'outer'), 'O8': ('Bb', 4, 'outer'),
     'O9': ('Eb', 4, 'outer'), 'O10': ('Ab', 4, 'outer'), 'O11': ('C#', 4, 'outer'),
 }
+
+# Semitone offsets for note-to-MIDI conversion
+NOTE_TO_SEMITONE = {
+    'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
+    'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
+    'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
+}
+
+
+def note_to_midi(name, octave):
+    """Convert note name and octave to MIDI note number."""
+    semitone = NOTE_TO_SEMITONE.get(name)
+    if semitone is None:
+        return None
+    return (octave + 1) * 12 + semitone
+
+
+def load_calibration(path=CALIBRATION_PATH):
+    """Load per-note calibration data from JSON file."""
+    if not os.path.exists(path):
+        return None
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def get_calibrated_params(calibration, midi_note, base_params):
+    """Get synthesis parameters for a MIDI note using calibration data.
+
+    Uses calibration data if available, interpolates from nearest
+    calibrated notes if not, falls back to base_params.
+    """
+    if calibration is None:
+        return base_params.copy()
+
+    notes = calibration.get('notes', {})
+    defaults = calibration.get('defaults', {})
+    key = str(midi_note)
+
+    # Start from base_params (user overrides), overlay calibrated values
+    params = base_params.copy()
+
+    # Keys that come from calibration
+    cal_keys = ['attack', 'decay', 'sustain', 'release', 'sub_bass',
+                'fundamental', 'harmonic2', 'harmonic3', 'harmonic4',
+                'filter', 'brightness']
+
+    if key in notes:
+        for k in cal_keys:
+            if k in notes[key]:
+                params[k] = notes[key][k]
+            elif k in defaults:
+                params[k] = defaults[k]
+        if 'detune' in defaults:
+            params['detune'] = defaults['detune']
+        return params
+
+    # Interpolate from nearest calibrated notes
+    calibrated_notes = sorted([int(k) for k in notes.keys()])
+    if not calibrated_notes:
+        return params
+
+    below = [n for n in calibrated_notes if n < midi_note]
+    above = [n for n in calibrated_notes if n > midi_note]
+
+    if below and above:
+        lo = below[-1]
+        hi = above[0]
+        t = (midi_note - lo) / (hi - lo)
+        lo_params = notes[str(lo)]
+        hi_params = notes[str(hi)]
+        for k in cal_keys:
+            lo_val = lo_params.get(k, defaults.get(k, params.get(k, 0)))
+            hi_val = hi_params.get(k, defaults.get(k, params.get(k, 0)))
+            params[k] = int(lo_val + t * (hi_val - lo_val))
+    elif below:
+        for k in cal_keys:
+            if k in notes[str(below[-1])]:
+                params[k] = notes[str(below[-1])][k]
+            elif k in defaults:
+                params[k] = defaults[k]
+    elif above:
+        for k in cal_keys:
+            if k in notes[str(above[0])]:
+                params[k] = notes[str(above[0])][k]
+            elif k in defaults:
+                params[k] = defaults[k]
+
+    if 'detune' in defaults:
+        params['detune'] = defaults['detune']
+    return params
+
 
 # Default synthesis parameters
 DEFAULT_PARAMS = {
@@ -257,15 +352,23 @@ def find_note_by_name(note_str):
     return None
 
 
-def generate_all(params, output_dir="sounds", verbose=True):
-    """Generate all notes with given parameters."""
+def generate_all(params, output_dir="sounds", verbose=True, calibration=None):
+    """Generate all notes with given parameters.
+
+    If calibration data is provided, per-note parameters are used
+    (from real sample analysis), with params as the base/fallback.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
+    using_cal = calibration is not None
     if verbose:
         print("=" * 60)
         print("Steel Pan Sound Generator - deepPan")
         print("=" * 60)
-        print(f"\nParameters:")
+        if using_cal:
+            cal_notes = len(calibration.get('notes', {}))
+            print(f"\nUsing per-note calibration ({cal_notes} calibrated notes)")
+        print(f"\nBase parameters:")
         print(f"  Envelope: attack={params['attack']}ms, decay={params['decay']}ms, "
               f"sustain={params['sustain']}%, release={params['release']}ms")
         print(f"  Harmonics: fund={params['fundamental']}%, h2={params['harmonic2']}%, "
@@ -287,7 +390,18 @@ def generate_all(params, output_dir="sounds", verbose=True):
                 continue
 
             frequency = get_frequency(note_name, octave)
-            sound = generate_steel_pan_note(frequency, params)
+
+            # Use per-note calibration if available
+            if using_cal:
+                midi = note_to_midi(note_name, octave)
+                note_params = get_calibrated_params(calibration, midi, params)
+                # Ensure duration covers the full decay + release tail
+                min_dur = (note_params['attack'] + note_params['decay'] + note_params['release']) / 1000 * 1.2
+                note_params['duration'] = max(note_params['duration'], min_dur, 2.5)
+            else:
+                note_params = params
+
+            sound = generate_steel_pan_note(frequency, note_params)
 
             safe_name = note_name.replace('#', 's')
             filename = f"{idx}_{safe_name}{octave}.wav"
@@ -297,12 +411,20 @@ def generate_all(params, output_dir="sounds", verbose=True):
             generated.append((idx, note_name, octave, filename))
 
             if verbose:
-                print(f"  {idx:4s}: {note_name:2s}{octave} ({frequency:7.1f} Hz) -> {filename}")
+                if using_cal:
+                    print(f"  {idx:4s}: {note_name:2s}{octave} ({frequency:7.1f} Hz) "
+                          f"[A={note_params['attack']} D={note_params['decay']} "
+                          f"h2={note_params['harmonic2']} filt={note_params['filter']}] "
+                          f"-> {filename}")
+                else:
+                    print(f"  {idx:4s}: {note_name:2s}{octave} ({frequency:7.1f} Hz) -> {filename}")
 
     if verbose:
         print()
         print("=" * 60)
         print(f"Generated {len(generated)} sound files in '{output_dir}/'")
+        if using_cal:
+            print("(using per-note calibration from calibration.json)")
         print("=" * 60)
 
     # Save parameters used
@@ -377,6 +499,12 @@ Examples:
     parser.add_argument('-o', '--output', default='sounds',
                         help='Output directory (default: sounds)')
 
+    # Calibration
+    parser.add_argument('--no-calibration', action='store_true',
+                        help='Disable per-note calibration (use uniform params)')
+    parser.add_argument('--calibration', metavar='FILE', default=CALIBRATION_PATH,
+                        help='Path to calibration.json')
+
     # Utilities
     parser.add_argument('--list-params', action='store_true',
                         help='List all parameters and exit')
@@ -450,6 +578,14 @@ Examples:
         if arg_val is not None:
             params[key] = arg_val
 
+    # Load calibration data (per-note parameters from real samples)
+    calibration = None
+    if not args.no_calibration:
+        calibration = load_calibration(args.calibration)
+        if calibration and not args.quiet:
+            cal_notes = len(calibration.get('notes', {}))
+            print(f"Loaded calibration data: {cal_notes} notes from {args.calibration}")
+
     # Generate single note or all
     if args.note:
         note_id = find_note_by_name(args.note)
@@ -461,10 +597,19 @@ Examples:
         note_name, octave, ring = NOTE_MAP[note_id]
         frequency = get_frequency(note_name, octave)
 
+        # Use per-note calibration if available
+        if calibration:
+            midi = note_to_midi(note_name, octave)
+            note_params = get_calibrated_params(calibration, midi, params)
+            min_dur = (note_params['attack'] + note_params['decay'] + note_params['release']) / 1000 * 1.2
+            note_params['duration'] = max(note_params['duration'], min_dur, 2.5)
+        else:
+            note_params = params
+
         if not args.quiet:
             print(f"Generating {note_name}{octave} ({frequency:.1f} Hz)...")
 
-        sound = generate_steel_pan_note(frequency, params)
+        sound = generate_steel_pan_note(frequency, note_params)
 
         os.makedirs(args.output, exist_ok=True)
         safe_name = note_name.replace('#', 's')
@@ -475,7 +620,8 @@ Examples:
         if not args.quiet:
             print(f"Saved: {filepath}")
     else:
-        generate_all(params, args.output, verbose=not args.quiet)
+        generate_all(params, args.output, verbose=not args.quiet,
+                     calibration=calibration)
 
 
 if __name__ == "__main__":
