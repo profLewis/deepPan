@@ -18,11 +18,11 @@ import math
 # Match mount_base external thread dimensions
 MOUNT_BASE_WALL_OUTER = 36.8
 MOUNT_BASE_EXT_THREAD_DEPTH = 1.0
-MOUNT_BASE_HEIGHT = 12.0
-PCB_BOSS_HEIGHT = 3.0
+MOUNT_BASE_HEIGHT = 15.0  # Lengthened by 3mm for extended external threads
+PCB_BOSS_HEIGHT = 6.0  # Lengthened for M2*8 screws
 
 # Sleeve parameters
-THREAD_CLEARANCE = 0.3
+THREAD_CLEARANCE = 0.5
 SLEEVE_INNER_DIAMETER = MOUNT_BASE_WALL_OUTER + 2 * MOUNT_BASE_EXT_THREAD_DEPTH + THREAD_CLEARANCE
 SLEEVE_THREAD_DEPTH = 1.0
 SLEEVE_THREAD_PITCH = 2.0
@@ -32,7 +32,7 @@ FLOOR_THICKNESS = 2.0
 THREAD_REGION_HEIGHT = MOUNT_BASE_HEIGHT  # 12mm
 
 # Floor position
-FLOOR_Z = -MOUNT_BASE_HEIGHT - PCB_BOSS_HEIGHT - 5.0  # -20mm
+FLOOR_Z = -MOUNT_BASE_HEIGHT - PCB_BOSS_HEIGHT - 10.0  # -28mm (5mm deeper than before)
 SLEEVE_HEIGHT = -FLOOR_Z + FLOOR_THICKNESS  # 22mm
 
 # Grip parameters
@@ -51,6 +51,22 @@ FLOOR_HOLE_DIAMETER = 10.0
 
 SEGMENTS = 48
 HOLE_SEGMENTS = 24
+
+
+def helical_thread_profile(phase, depth, crest_fraction=0.25):
+    """
+    Trapezoidal thread profile — sharp raised ridge with wide groove.
+    Must match the profile in generate_mount_base.py.
+    """
+    phase = phase % 1.0
+    if phase < crest_fraction:
+        return depth * (phase / crest_fraction)
+    elif phase < 0.5:
+        return depth
+    elif phase < 0.5 + crest_fraction:
+        return depth * (1.0 - (phase - 0.5) / crest_fraction)
+    else:
+        return 0.0
 
 
 def generate_sleeve():
@@ -109,23 +125,24 @@ def generate_sleeve():
     def in_slit_z(z_idx):
         return slit_top_idx <= z_idx <= slit_bottom_idx
 
-    # Create interior rings (full circles)
+    # Create interior rings (full circles) — helical screw threads
     interior_rings = []
     for z in z_levels:
         if z < z_floor:
             interior_rings.append(None)
             continue
-        if z >= z_thread_bottom:
-            t = (z_top - z) / THREAD_REGION_HEIGHT if THREAD_REGION_HEIGHT > 0 else 0
-            thread_phase = (t * THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH) % 1.0
-            thread_h = SLEEVE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
-            r = inner_r - thread_h
-        else:
-            r = inner_r
 
         ring = []
         for seg in range(SEGMENTS):
             angle = 2 * math.pi * seg / SEGMENTS
+            if z >= z_thread_bottom:
+                t = (z_top - z) / THREAD_REGION_HEIGHT if THREAD_REGION_HEIGHT > 0 else 0
+                # Helical thread: phase depends on both Z and angle
+                thread_phase = (t * THREAD_REGION_HEIGHT / SLEEVE_THREAD_PITCH + angle / (2 * math.pi)) % 1.0
+                thread_h = helical_thread_profile(thread_phase, SLEEVE_THREAD_DEPTH)
+                r = inner_r - thread_h
+            else:
+                r = inner_r
             ring.append(len(vertices))
             vertices.append([r * math.cos(angle), r * math.sin(angle), z])
         interior_rings.append(ring)

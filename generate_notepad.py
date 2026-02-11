@@ -30,9 +30,22 @@ MOUNT_THREAD_DEPTH = 1.0      # Thread depth (outward from wall)
 MOUNT_NOTCH_WIDTH = 2.0       # Wire notch width
 MOUNT_SEGMENTS = 48           # Resolution for cylinder
 
+# Anti-rotation rib parameters (on exterior of mount cylinder)
+RIB_WIDTH = 2.0               # Width of rib in mm
+RIB_HEIGHT = 1.0              # Protrusion outward in mm
+RIB_ANGLE = math.pi           # Position: 180 degrees from notch
+
 # Minimum pad size to accommodate cylinder (with margin)
 MOUNT_OUTER_DIAMETER = MOUNT_INNER_DIAMETER + 2 * MOUNT_WALL_THICKNESS + 2 * MOUNT_THREAD_DEPTH
 MIN_PAD_SIZE = MOUNT_OUTER_DIAMETER + 0.5  # Add 0.5mm margin
+
+# M4 screw boss parameters (on underside of notepad)
+BOSS_COUNT = 4
+BOSS_OUTER_DIAMETER = 10.0    # Outer diameter of boss cylinder
+BOSS_HOLE_DIAMETER = 4.3      # M4 clearance hole
+BOSS_HEIGHT = 20.0            # Boss extends downward from surface (for M4*20 screws)
+BOSS_INSET = 20.0             # Distance inset from notepad edges
+BOSS_SEGMENTS = 16            # Resolution for boss cylinders
 
 # Note mapping: (grove_object, pan_object) -> (index, note, ring, octave)
 NOTE_MAPPING = {
@@ -239,6 +252,16 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
 
     notch_half_width = notch_width / 2
 
+    # Anti-rotation rib: calculate which segments fall in the rib region
+    rib_half_angle = math.atan2(RIB_WIDTH / 2, outer_r)
+
+    def in_rib(seg_idx):
+        angle = 2 * math.pi * seg_idx / segments
+        angle_diff = abs(angle - RIB_ANGLE)
+        if angle_diff > math.pi:
+            angle_diff = 2 * math.pi - angle_diff
+        return angle_diff <= rib_half_angle
+
     # Calculate notch angle (use the angle that gives notch_half_width at inner radius)
     notch_half_angle = math.atan2(notch_half_width, inner_r)
 
@@ -281,9 +304,10 @@ def generate_threaded_mount_cylinder(inner_diameter, depth, wall_thickness, thre
             inner_ring[i] = len(vertices)
             vertices.append([inner_r * math.cos(angle), inner_r * math.sin(angle), z])
 
-            # Outer vertex with thread profile (same radius for all segments at this Z)
+            # Outer vertex with thread profile + anti-rotation rib
+            r = thread_r + (RIB_HEIGHT if in_rib(i) else 0)
             outer_ring[i] = len(vertices)
-            vertices.append([thread_r * math.cos(angle), thread_r * math.sin(angle), z])
+            vertices.append([r * math.cos(angle), r * math.sin(angle), z])
 
         inner_rings.append(inner_ring)
         outer_rings.append(outer_ring)
@@ -712,6 +736,134 @@ def write_stl(filepath, vertices, faces, object_name="NotePad"):
     print(f"Saved: {filepath}")
 
 
+def generate_screw_boss(height, boss_diameter, hole_diameter, segments=BOSS_SEGMENTS):
+    """
+    Generate a hollow cylindrical boss (annular cylinder) centered at origin.
+
+    The boss extends downward along -Z from z=0.
+    Returns vertices and faces for a watertight annular cylinder.
+    """
+    outer_r = boss_diameter / 2
+    inner_r = hole_diameter / 2
+    vertices = []
+    faces = []
+
+    # Create 4 rings: outer top, inner top, outer bottom, inner bottom
+    rings = {}
+    for label, r, z in [('ot', outer_r, 0), ('it', inner_r, 0),
+                         ('ob', outer_r, -height), ('ib', inner_r, -height)]:
+        ring = []
+        for i in range(segments):
+            angle = 2 * math.pi * i / segments
+            ring.append(len(vertices))
+            vertices.append([r * math.cos(angle), r * math.sin(angle), z])
+        rings[label] = ring
+
+    # Outer wall (top to bottom, outward-facing)
+    for i in range(segments):
+        i_next = (i + 1) % segments
+        faces.append([rings['ot'][i], rings['ob'][i],
+                     rings['ob'][i_next], rings['ot'][i_next]])
+
+    # Inner wall (top to bottom, inward-facing)
+    for i in range(segments):
+        i_next = (i + 1) % segments
+        faces.append([rings['it'][i], rings['it'][i_next],
+                     rings['ib'][i_next], rings['ib'][i]])
+
+    # Top annulus (outer to inner, upward-facing)
+    for i in range(segments):
+        i_next = (i + 1) % segments
+        faces.append([rings['ot'][i], rings['ot'][i_next],
+                     rings['it'][i_next], rings['it'][i]])
+
+    # Bottom annulus (outer to inner, downward-facing)
+    for i in range(segments):
+        i_next = (i + 1) % segments
+        faces.append([rings['ob'][i], rings['ob'][i_next],
+                     rings['ib'][i_next], rings['ib'][i]])
+
+    return np.array(vertices), faces
+
+
+def compute_boss_positions(pan_verts, grove_verts, centroid, normal, inset=BOSS_INSET):
+    """
+    Compute 4 boss positions near the corners of the notepad.
+
+    Inset is measured from the inner edge of the groove (grove), not the pan
+    bounding box. Positions are snapped to actual pan vertices.
+
+    Returns list of 4 positions in 3D world coordinates (on the surface plane).
+    """
+    z_local = normal / np.linalg.norm(normal)
+
+    # Find perpendicular axes
+    if abs(z_local[0]) < 0.9:
+        x_local = np.cross(z_local, np.array([1, 0, 0]))
+    else:
+        x_local = np.cross(z_local, np.array([0, 1, 0]))
+    x_local = x_local / np.linalg.norm(x_local)
+    y_local = np.cross(z_local, x_local)
+
+    # Project pan vertices into local 2D frame
+    rel_pan = pan_verts - centroid
+    pan_lx = rel_pan @ x_local
+    pan_ly = rel_pan @ y_local
+
+    # Project grove vertices into local 2D frame to find inner boundary
+    rel_grove = grove_verts - centroid
+    grove_lx = rel_grove @ x_local
+    grove_ly = rel_grove @ y_local
+
+    # Find the grove inner boundary: for each grove vertex, compute distance
+    # from centroid. The "inner line" vertices are those closest to centroid.
+    # Use the grove bbox as the edge reference (grove surrounds the pan).
+    grove_x_min, grove_x_max = grove_lx.min(), grove_lx.max()
+    grove_y_min, grove_y_max = grove_ly.min(), grove_ly.max()
+
+    # Inset from the grove inner edges (the inner-most extent of the grove)
+    # For each axis direction, find the grove edge closest to centroid
+    # Left edge: max of grove x_min values (innermost left grove boundary)
+    # Right edge: min of grove x_max values (innermost right grove boundary)
+    # We approximate the inner boundary by looking at grove vertices near each edge
+    # The inner line is where the grove meets the pan, so use the pan bbox as proxy
+    # for the inner grove boundary
+    pan_x_min, pan_x_max = pan_lx.min(), pan_lx.max()
+    pan_y_min, pan_y_max = pan_ly.min(), pan_ly.max()
+
+    # Use the pan edge (which aligns with the grove inner line) and inset from there
+    corners_local = [
+        (pan_x_min + inset, pan_y_min + inset),
+        (pan_x_max - inset, pan_y_min + inset),
+        (pan_x_max - inset, pan_y_max - inset),
+        (pan_x_min + inset, pan_y_max - inset),
+    ]
+
+    # Additionally verify each boss is at least inset distance from nearest grove vertex
+    positions = []
+    for cx, cy in corners_local:
+        # Check distance to nearest grove vertex
+        grove_dists = np.sqrt((grove_lx - cx) ** 2 + (grove_ly - cy) ** 2)
+        min_grove_dist = grove_dists.min()
+
+        # If too close to grove, push toward centroid
+        if min_grove_dist < inset:
+            # Direction from corner toward centroid (0,0 in local frame)
+            dx, dy = -cx, -cy
+            d = math.sqrt(dx * dx + dy * dy)
+            if d > 0:
+                push = (inset - min_grove_dist) + 2.0  # extra 2mm margin
+                cx += push * dx / d
+                cy += push * dy / d
+
+        # Snap to nearest actual pad vertex
+        pan_dists = (pan_lx - cx) ** 2 + (pan_ly - cy) ** 2
+        nearest_idx = np.argmin(pan_dists)
+        positions.append(pan_verts[nearest_idx].copy())
+
+    return positions
+
+
 def generate_notepad(note_index, obj_path, output_dir,
                      pan_thickness=PAN_THICKNESS,
                      grove_depth=GROVE_DEPTH,
@@ -829,6 +981,30 @@ def generate_notepad(note_index, obj_path, output_dir,
     solid_faces = solid_faces + [[idx + n_solid_verts for idx in face] for face in cylinder_faces]
     print(f"  Combined with cylinder: {len(solid_verts)} vertices, {len(solid_faces)} faces")
 
+    # Generate M4 screw bosses near corners of the notepad
+    print(f"Generating M4 screw bosses...")
+    print(f"  Boss diameter: {BOSS_OUTER_DIAMETER}mm, Hole: {BOSS_HOLE_DIAMETER}mm, Height: {BOSS_HEIGHT}mm")
+    boss_positions = compute_boss_positions(pan_verts, grove_verts, pan_surface_centroid, notepad_normal, inset=BOSS_INSET)
+
+    for i, pos in enumerate(boss_positions):
+        boss_verts, boss_faces = generate_screw_boss(
+            height=BOSS_HEIGHT,
+            boss_diameter=BOSS_OUTER_DIAMETER,
+            hole_diameter=BOSS_HOLE_DIAMETER
+        )
+        # Transform boss: align -Z with -normal, offset below surface so top
+        # sits at the underside of the pad (avoids poking through curved surface)
+        boss_origin = pos - notepad_normal * pan_thickness
+        boss_verts_transformed = transform_cylinder_to_normal(boss_verts, boss_origin, notepad_normal)
+
+        # Add boss to combined mesh
+        n_solid_verts = len(solid_verts)
+        solid_verts = np.vstack([solid_verts, boss_verts_transformed])
+        solid_faces = solid_faces + [[idx + n_solid_verts for idx in face] for face in boss_faces]
+
+    print(f"  Added {len(boss_positions)} screw bosses")
+    print(f"  Combined with bosses: {len(solid_verts)} vertices, {len(solid_faces)} faces")
+
     print(f"\nNote pad properties (before centering):")
     print(f"  Normal vector: ({notepad_normal[0]:.6f}, {notepad_normal[1]:.6f}, {notepad_normal[2]:.6f})")
     print(f"  Surface centroid: ({pan_surface_centroid[0]:.2f}, {pan_surface_centroid[1]:.2f}, {pan_surface_centroid[2]:.2f}) mm")
@@ -871,6 +1047,9 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"  Grove: {grove_depth}mm down, {grove_protrusion}mm up (ridge)")
     print(f"{'='*60}")
 
+    # Compute boss positions in centered coordinates
+    boss_positions_centered = [(pos - offset).tolist() for pos in boss_positions]
+
     return {
         'index': note_index,
         'note': note_name,
@@ -881,6 +1060,11 @@ def generate_notepad(note_index, obj_path, output_dir,
         'centroid_original': notepad_centroid.tolist(),  # Interior centroid (original coords, mm)
         'scale_factor': scale_factor,  # 1.0 if not scaled, >1.0 if enlarged
         'was_scaled': was_scaled,  # True if pad was enlarged to fit cylinder
+        'boss_positions': [pos.tolist() for pos in boss_positions],
+        'boss_positions_centered': boss_positions_centered,
+        'boss_height': BOSS_HEIGHT,
+        'boss_diameter': BOSS_OUTER_DIAMETER,
+        'boss_hole_diameter': BOSS_HOLE_DIAMETER,
         'vertices': solid_verts,
         'faces': solid_faces,
         'bbox_size': bbox_size.tolist(),
@@ -906,6 +1090,11 @@ def save_notepad_properties(results, output_path):
             'centroid_original': r['centroid_original'],
             'scale_factor': r['scale_factor'],
             'was_scaled': r['was_scaled'],
+            'boss_positions': r['boss_positions'],
+            'boss_positions_centered': r['boss_positions_centered'],
+            'boss_height': r['boss_height'],
+            'boss_diameter': r['boss_diameter'],
+            'boss_hole_diameter': r['boss_hole_diameter'],
             'bbox_size': r['bbox_size'],
             'obj_path': r['obj_path'],
             'stl_path': r['stl_path']

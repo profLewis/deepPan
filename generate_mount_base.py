@@ -24,12 +24,12 @@ NOTEPAD_WALL_OUTER = NOTEPAD_INNER_DIAMETER + 2 * NOTEPAD_WALL_THICKNESS
 NOTEPAD_THREAD_OUTER = NOTEPAD_WALL_OUTER + 2 * NOTEPAD_THREAD_DEPTH
 
 # Mount base parameters
-THREAD_CLEARANCE = 0.3
+THREAD_CLEARANCE = 0.5
 BASE_INNER_DIAMETER = NOTEPAD_THREAD_OUTER + THREAD_CLEARANCE  # Internal thread root
 BASE_THREAD_DEPTH = 1.0  # Internal thread depth
 BASE_WALL_THICKNESS = 3.0
 THREAD_HEIGHT = 9.0  # Depth of internal threaded cavity
-FLOOR_THICKNESS = 3.0  # Solid floor below the threaded cavity
+FLOOR_THICKNESS = 6.0  # Solid floor below the threaded cavity (extended for longer external threads)
 BASE_HEIGHT = THREAD_HEIGHT + FLOOR_THICKNESS  # Total height
 
 # External thread parameters (for outer sleeve to grip)
@@ -39,15 +39,42 @@ EXT_THREAD_PITCH = 2.0
 # Notch parameters (wire routing, aligned at angle=0)
 NOTCH_WIDTH = 5.0  # Width of notch at inner radius
 
+# Anti-rotation groove parameters (matches rib on notepad mount)
+GROOVE_WIDTH = 2.5   # Slightly wider than notepad rib (2.0mm) for clearance
+GROOVE_DEPTH = 1.0   # Depth inward from interior thread root
+GROOVE_ANGLE = np.pi  # Position: 180 degrees from notch
+
 # PCB mount parameters
 PCB_HOLE_GRID = 16.0        # M2 holes on 16mm grid
 PCB_HOLE_DIAMETER = 2.2     # M2 clearance hole
 PCB_BOSS_DIAMETER = 5.0     # Boss around screw hole
-PCB_BOSS_HEIGHT = 3.0       # Height of screw bosses
+PCB_BOSS_HEIGHT = 6.0       # Height of screw bosses (for M2*8 screws)
 
 # Resolution
 SEGMENTS = 48
 BOSS_SEGMENTS = 16
+
+
+def helical_thread_profile(phase, depth, crest_fraction=0.25):
+    """
+    Trapezoidal thread profile — sharp raised ridge with wide groove.
+
+    crest_fraction controls what fraction of the pitch is the raised crest.
+    Smaller values = narrower, more visible thread ridges.
+    """
+    phase = phase % 1.0
+    if phase < crest_fraction:
+        # Rising edge
+        return depth * (phase / crest_fraction)
+    elif phase < 0.5:
+        # Crest (full height)
+        return depth
+    elif phase < 0.5 + crest_fraction:
+        # Falling edge
+        return depth * (1.0 - (phase - 0.5) / crest_fraction)
+    else:
+        # Groove (root)
+        return 0.0
 
 
 def generate_cylinder():
@@ -84,8 +111,18 @@ def generate_cylinder():
     z_levels_base = 4
     total_z_levels = z_levels_thread + z_levels_base
 
+    # Anti-rotation groove: which segments are in the groove region
+    groove_half_angle = np.arctan2(GROOVE_WIDTH / 2, inner_r)
+
+    def in_groove(seg):
+        angle = 2 * np.pi * seg / SEGMENTS
+        angle_diff = abs(angle - GROOVE_ANGLE)
+        if angle_diff > np.pi:
+            angle_diff = 2 * np.pi - angle_diff
+        return angle_diff <= groove_half_angle
+
     # ========== CREATE ALL RING VERTICES ==========
-    # Interior threaded rings (valid_segs only)
+    # Interior threaded rings (valid_segs only) — with anti-rotation groove
     interior_rings = []
     for z_idx in range(z_levels_thread + 1):
         z = z_top - (z_idx / z_levels_thread) * THREAD_HEIGHT
@@ -96,11 +133,13 @@ def generate_cylinder():
         int_ring = {}
         for seg in valid_segs:
             angle = 2 * np.pi * seg / SEGMENTS
+            # Add groove: increase radius (cut outward into wall) for groove segments
+            seg_r = r + GROOVE_DEPTH if in_groove(seg) else r
             int_ring[seg] = len(vertices)
-            vertices.append([r * np.cos(angle), r * np.sin(angle), z])
+            vertices.append([seg_r * np.cos(angle), seg_r * np.sin(angle), z])
         interior_rings.append(int_ring)
 
-    # Exterior rings (valid_segs only)
+    # Exterior rings (valid_segs only) — helical screw threads
     exterior_rings = []
     for z_idx in range(total_z_levels + 1):
         if z_idx <= z_levels_thread:
@@ -109,13 +148,13 @@ def generate_cylinder():
             base_idx = z_idx - z_levels_thread
             z = z_floor - (base_idx / z_levels_base) * FLOOR_THICKNESS
 
-        thread_phase = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH) % 1.0
-        thread_h = EXT_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
-        ext_r = outer_r + thread_h
-
         ext_ring = {}
         for seg in valid_segs:
             angle = 2 * np.pi * seg / SEGMENTS
+            # Helical thread: phase depends on both Z and angle
+            thread_phase = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH + angle / (2 * np.pi)) % 1.0
+            thread_h = helical_thread_profile(thread_phase, EXT_THREAD_DEPTH)
+            ext_r = outer_r + thread_h
             ext_ring[seg] = len(vertices)
             vertices.append([ext_r * np.cos(angle), ext_r * np.sin(angle), z])
         exterior_rings.append(ext_ring)
@@ -153,18 +192,20 @@ def generate_cylinder():
         int_thread_h = BASE_THREAD_DEPTH * (1 - abs(2 * thread_phase - 1))
         int_r = inner_r - int_thread_h
 
-        ext_phase = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH) % 1.0
-        ext_thread_h = EXT_THREAD_DEPTH * (1 - abs(2 * ext_phase - 1))
-        ext_r = outer_r + ext_thread_h
+        # Helical external thread at notch edge angles
+        ext_phase_left = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH + last_angle / (2 * np.pi)) % 1.0
+        ext_r_left = outer_r + helical_thread_profile(ext_phase_left, EXT_THREAD_DEPTH)
+        ext_phase_right = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH + first_angle / (2 * np.pi)) % 1.0
+        ext_r_right = outer_r + helical_thread_profile(ext_phase_right, EXT_THREAD_DEPTH)
 
         notch_int_left.append(len(vertices))
         vertices.append([int_r * np.cos(last_angle), int_r * np.sin(last_angle), z])
         notch_ext_left.append(len(vertices))
-        vertices.append([ext_r * np.cos(last_angle), ext_r * np.sin(last_angle), z])
+        vertices.append([ext_r_left * np.cos(last_angle), ext_r_left * np.sin(last_angle), z])
         notch_int_right.append(len(vertices))
         vertices.append([int_r * np.cos(first_angle), int_r * np.sin(first_angle), z])
         notch_ext_right.append(len(vertices))
-        vertices.append([ext_r * np.cos(first_angle), ext_r * np.sin(first_angle), z])
+        vertices.append([ext_r_right * np.cos(first_angle), ext_r_right * np.sin(first_angle), z])
 
     # Notch wall vertices for base section (exterior only, below floor)
     notch_ext_left_base = [notch_ext_left[-1]]  # Start from floor level
@@ -173,14 +214,16 @@ def generate_cylinder():
         base_idx = z_idx - z_levels_thread
         z = z_floor - (base_idx / z_levels_base) * FLOOR_THICKNESS
 
-        ext_phase = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH) % 1.0
-        ext_thread_h = EXT_THREAD_DEPTH * (1 - abs(2 * ext_phase - 1))
-        ext_r = outer_r + ext_thread_h
+        # Helical external thread at notch edge angles
+        ext_phase_left = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH + last_angle / (2 * np.pi)) % 1.0
+        ext_r_left = outer_r + helical_thread_profile(ext_phase_left, EXT_THREAD_DEPTH)
+        ext_phase_right = (z_idx / total_z_levels * BASE_HEIGHT / EXT_THREAD_PITCH + first_angle / (2 * np.pi)) % 1.0
+        ext_r_right = outer_r + helical_thread_profile(ext_phase_right, EXT_THREAD_DEPTH)
 
         notch_ext_left_base.append(len(vertices))
-        vertices.append([ext_r * np.cos(last_angle), ext_r * np.sin(last_angle), z])
+        vertices.append([ext_r_left * np.cos(last_angle), ext_r_left * np.sin(last_angle), z])
         notch_ext_right_base.append(len(vertices))
-        vertices.append([ext_r * np.cos(first_angle), ext_r * np.sin(first_angle), z])
+        vertices.append([ext_r_right * np.cos(first_angle), ext_r_right * np.sin(first_angle), z])
 
     # Floor and bottom notch edge vertices
     notch_floor_left = len(vertices)
