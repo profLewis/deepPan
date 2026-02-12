@@ -951,6 +951,51 @@ def prepare_shells(bowl_verts, bowl_faces, face_material, note_props):
 
 
 # ============================================================
+# Print orientation
+# ============================================================
+
+P1S_BUILD = 256.0  # mm, Bambu P1S build volume per axis
+
+def orient_for_printing(verts):
+    """Rotate mesh around Y axis to minimise max(bbox_X, bbox_Z) so
+    the section fits the P1S square build plate.  Then flip Y so the
+    drum opening faces up (playing surface / inner bowl on the build
+    plate) for minimal overhang support."""
+
+    best_angle = 0.0
+    best_max_xz = float('inf')
+
+    # Brute-force search in 0.5° steps — fast enough for a one-off
+    for deg_10 in range(0, 3600, 5):   # 0 to 359.5 in 0.5° steps
+        a = math.radians(deg_10 / 10.0)
+        ca, sa = math.cos(a), math.sin(a)
+        rx = verts[:, 0] * ca + verts[:, 2] * sa
+        rz = -verts[:, 0] * sa + verts[:, 2] * ca
+        span_x = rx.max() - rx.min()
+        span_z = rz.max() - rz.min()
+        max_xz = max(span_x, span_z)
+        if max_xz < best_max_xz:
+            best_max_xz = max_xz
+            best_angle = deg_10 / 10.0
+
+    # Apply best Y-axis rotation
+    a = math.radians(best_angle)
+    ca, sa = math.cos(a), math.sin(a)
+    rot_verts = verts.copy()
+    rot_verts[:, 0] = verts[:, 0] * ca + verts[:, 2] * sa
+    rot_verts[:, 2] = -verts[:, 0] * sa + verts[:, 2] * ca
+
+    # Flip Y (negate) so drum opening faces up — the concave playing
+    # surface sits on the build plate, drum wall points upward
+    rot_verts[:, 1] = -rot_verts[:, 1]
+
+    # Shift so min corner is at origin (positive octant)
+    rot_verts -= rot_verts.min(axis=0)
+
+    return rot_verts, best_angle
+
+
+# ============================================================
 # Cut section from pre-built shells + add walls
 # ============================================================
 
@@ -1088,6 +1133,17 @@ def extract_section(section_id, ps_surf_v, ps_surf_f, ps_is_pocket,
     write_quarter_obj(obj_path, s_verts, s_faces, f"Section_{section_id}")
     write_quarter_stl(stl_path, s_verts, s_faces, f"Section_{section_id}")
 
+    # Print-oriented STL: rotate around Y to minimise max(X,Z), then
+    # flip so drum opening faces up (playing surface on build plate)
+    print_verts, print_angle = orient_for_printing(s_verts)
+    print_bbox = print_verts.max(axis=0) - print_verts.min(axis=0)
+    print_fits = all(d <= 256 for d in print_bbox)
+    print_stl = output_dir / f"section_{section_id}_print.stl"
+    write_quarter_stl(print_stl, print_verts, s_faces, f"Section_{section_id}_print")
+    print(f"  Print orientation: rotated {print_angle:.1f}° around Y")
+    print(f"  Print bbox: {print_bbox[0]:.1f} x {print_bbox[1]:.1f} x {print_bbox[2]:.1f} mm")
+    print(f"  Print fits P1S (256mm): {'YES' if print_fits else 'NO (see dimensions)'}")
+
     return {
         'section': section_id,
         'angle_start': angle_start,
@@ -1101,6 +1157,10 @@ def extract_section(section_id, ps_surf_v, ps_surf_f, ps_is_pocket,
         'n_faces': len(s_faces),
         'obj_path': str(obj_path),
         'stl_path': str(stl_path),
+        'print_stl_path': str(print_stl),
+        'print_rotation_deg': print_angle,
+        'print_bbox_size': print_bbox.tolist(),
+        'print_fits_p1s': print_fits,
     }, s_verts, s_faces
 
 

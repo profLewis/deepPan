@@ -44,7 +44,15 @@
       "n_vertices": 380236,
       "n_faces": 744626,
       "obj_path": "data/quarters/section_S0.obj",
-      "stl_path": "data/quarters/section_S0.stl"
+      "stl_path": "data/quarters/section_S0.stl",
+      "print_stl_path": "data/quarters/section_S0_print.stl",
+      "print_rotation_deg": 0.0,
+      "print_bbox_size": [
+        217.86013086900024,
+        171.05126411855485,
+        217.86013086900024
+      ],
+      "print_fits_p1s": true
     },
     {
       "section": "S1",
@@ -73,7 +81,15 @@
       "n_vertices": 416644,
       "n_faces": 817881,
       "obj_path": "data/quarters/section_S1.obj",
-      "stl_path": "data/quarters/section_S1.stl"
+      "stl_path": "data/quarters/section_S1.stl",
+      "print_stl_path": "data/quarters/section_S1_print.stl",
+      "print_rotation_deg": 150.0,
+      "print_bbox_size": [
+        217.86013086900022,
+        170.2950626324241,
+        217.86013086900024
+      ],
+      "print_fits_p1s": true
     },
     {
       "section": "S2",
@@ -102,7 +118,15 @@
       "n_vertices": 421428,
       "n_faces": 826367,
       "obj_path": "data/quarters/section_S2.obj",
-      "stl_path": "data/quarters/section_S2.stl"
+      "stl_path": "data/quarters/section_S2.stl",
+      "print_stl_path": "data/quarters/section_S2_print.stl",
+      "print_rotation_deg": 30.0,
+      "print_bbox_size": [
+        217.86013086900024,
+        171.76194239460233,
+        217.86013086900022
+      ],
+      "print_fits_p1s": true
     },
     {
       "section": "S3",
@@ -131,7 +155,15 @@
       "n_vertices": 373232,
       "n_faces": 732413,
       "obj_path": "data/quarters/section_S3.obj",
-      "stl_path": "data/quarters/section_S3.stl"
+      "stl_path": "data/quarters/section_S3.stl",
+      "print_stl_path": "data/quarters/section_S3_print.stl",
+      "print_rotation_deg": 0.0,
+      "print_bbox_size": [
+        217.86013086900024,
+        171.01074424875114,
+        217.86013086900022
+      ],
+      "print_fits_p1s": true
     },
     {
       "section": "S4",
@@ -160,7 +192,15 @@
       "n_vertices": 393382,
       "n_faces": 772325,
       "obj_path": "data/quarters/section_S4.obj",
-      "stl_path": "data/quarters/section_S4.stl"
+      "stl_path": "data/quarters/section_S4.stl",
+      "print_stl_path": "data/quarters/section_S4_print.stl",
+      "print_rotation_deg": 60.0,
+      "print_bbox_size": [
+        217.86013086900022,
+        170.27487586676705,
+        217.86013086900016
+      ],
+      "print_fits_p1s": true
     },
     {
       "section": "S5",
@@ -189,7 +229,15 @@
       "n_vertices": 445300,
       "n_faces": 873634,
       "obj_path": "data/quarters/section_S5.obj",
-      "stl_path": "data/quarters/section_S5.stl"
+      "stl_path": "data/quarters/section_S5.stl",
+      "print_stl_path": "data/quarters/section_S5_print.stl",
+      "print_rotation_deg": 30.0,
+      "print_bbox_size": [
+        217.86013086900027,
+        171.76212500912584,
+        217.86013086900024
+      ],
+      "print_fits_p1s": true
     }
   ]
 }
