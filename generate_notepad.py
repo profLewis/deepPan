@@ -44,7 +44,7 @@ BOSS_COUNT = 4
 BOSS_OUTER_DIAMETER = 10.0    # Outer diameter of boss cylinder
 BOSS_HOLE_DIAMETER = 4.3      # M4 clearance hole
 BOSS_HEIGHT = 20.0            # Boss extends downward from surface (for M4*20 screws)
-BOSS_INSET = 20.0             # Distance inset from notepad edges
+BOSS_INSET = 15.0             # Distance inset from notepad edges (several cm from edge)
 BOSS_SEGMENTS = 16            # Resolution for boss cylinders
 
 # Note mapping: (grove_object, pan_object) -> (index, note, ring, octave)
@@ -786,18 +786,60 @@ def generate_screw_boss(height, boss_diameter, hole_diameter, segments=BOSS_SEGM
     return np.array(vertices), faces
 
 
-def compute_boss_positions(pan_verts, grove_verts, centroid, normal, inset=BOSS_INSET):
-    """
-    Compute 4 boss positions near the corners of the notepad.
+def _point_in_polygon_2d(px, py, poly_x, poly_y):
+    """Ray-casting point-in-polygon test (2D)."""
+    n = len(poly_x)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        yi, yj = poly_y[i], poly_y[j]
+        xi, xj = poly_x[i], poly_x[j]
+        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
 
-    Inset is measured from the inner edge of the groove (grove), not the pan
-    bounding box. Positions are snapped to actual pan vertices.
+
+def _boss_contained_in_boundary(cx, cy, boss_radius, poly_x, poly_y):
+    """Check if a boss circle is wholly inside the boundary polygon."""
+    # Check center is inside
+    if not _point_in_polygon_2d(cx, cy, poly_x, poly_y):
+        return False
+    # Check minimum distance from center to any polygon edge >= boss_radius
+    n = len(poly_x)
+    for i in range(n):
+        j = (i + 1) % n
+        # Distance from point (cx,cy) to line segment (xi,yi)-(xj,yj)
+        ax, ay = poly_x[j] - poly_x[i], poly_y[j] - poly_y[i]
+        bx, by = cx - poly_x[i], cy - poly_y[i]
+        seg_len_sq = ax * ax + ay * ay
+        if seg_len_sq < 1e-12:
+            dist_sq = bx * bx + by * by
+        else:
+            t = max(0.0, min(1.0, (bx * ax + by * ay) / seg_len_sq))
+            dx = bx - t * ax
+            dy = by - t * ay
+            dist_sq = dx * dx + dy * dy
+        if dist_sq < boss_radius * boss_radius:
+            return False
+    return True
+
+
+def compute_boss_positions(pan_verts, pan_faces, grove_verts, centroid, normal, inset=BOSS_INSET):
+    """
+    Compute 4 boss positions at the corners of the notepad, inset by ~1.5cm.
+
+    Algorithm:
+    1. Extract boundary loop of pan faces
+    2. Project boundary vertices onto tangent plane (pad is curved, not flat)
+    3. Find 4 corners by identifying vertices with the sharpest turning angles
+    4. Step inward from each corner by `inset` mm toward centroid
 
     Returns list of 4 positions in 3D world coordinates (on the surface plane).
     """
     z_local = normal / np.linalg.norm(normal)
 
-    # Find perpendicular axes
+    # Build orthonormal basis on tangent plane
     if abs(z_local[0]) < 0.9:
         x_local = np.cross(z_local, np.array([1, 0, 0]))
     else:
@@ -805,61 +847,88 @@ def compute_boss_positions(pan_verts, grove_verts, centroid, normal, inset=BOSS_
     x_local = x_local / np.linalg.norm(x_local)
     y_local = np.cross(z_local, x_local)
 
-    # Project pan vertices into local 2D frame
-    rel_pan = pan_verts - centroid
-    pan_lx = rel_pan @ x_local
-    pan_ly = rel_pan @ y_local
+    # Get boundary loop of pan faces
+    be = find_boundary_edges(pan_faces)
+    loops = find_all_boundary_loops(be)
+    if not loops:
+        # Fallback: use bounding box corners
+        rel_pan = pan_verts - centroid
+        pan_lx = rel_pan @ x_local
+        pan_ly = rel_pan @ y_local
+        corners_local = [
+            (pan_lx.min() + inset, pan_ly.min() + inset),
+            (pan_lx.max() - inset, pan_ly.min() + inset),
+            (pan_lx.max() - inset, pan_ly.max() - inset),
+            (pan_lx.min() + inset, pan_ly.max() - inset),
+        ]
+        return [centroid + cx * x_local + cy * y_local for cx, cy in corners_local]
 
-    # Project grove vertices into local 2D frame to find inner boundary
-    rel_grove = grove_verts - centroid
-    grove_lx = rel_grove @ x_local
-    grove_ly = rel_grove @ y_local
+    # Use the longest loop (main outer boundary)
+    boundary_vi = max(loops, key=len)
+    boundary_pts = pan_verts[boundary_vi]
 
-    # Find the grove inner boundary: for each grove vertex, compute distance
-    # from centroid. The "inner line" vertices are those closest to centroid.
-    # Use the grove bbox as the edge reference (grove surrounds the pan).
-    grove_x_min, grove_x_max = grove_lx.min(), grove_lx.max()
-    grove_y_min, grove_y_max = grove_ly.min(), grove_ly.max()
+    # Project boundary onto tangent plane (2D)
+    rel = boundary_pts - centroid
+    bx = rel @ x_local
+    by = rel @ y_local
 
-    # Inset from the grove inner edges (the inner-most extent of the grove)
-    # For each axis direction, find the grove edge closest to centroid
-    # Left edge: max of grove x_min values (innermost left grove boundary)
-    # Right edge: min of grove x_max values (innermost right grove boundary)
-    # We approximate the inner boundary by looking at grove vertices near each edge
-    # The inner line is where the grove meets the pan, so use the pan bbox as proxy
-    # for the inner grove boundary
-    pan_x_min, pan_x_max = pan_lx.min(), pan_lx.max()
-    pan_y_min, pan_y_max = pan_ly.min(), pan_ly.max()
+    # Compute turning angles along the boundary loop to find corners
+    # A corner has a large exterior angle (sharp turn)
+    n_pts = len(boundary_vi)
+    turning_angles = []
+    for i in range(n_pts):
+        p_prev = np.array([bx[(i - 1) % n_pts], by[(i - 1) % n_pts]])
+        p_curr = np.array([bx[i], by[i]])
+        p_next = np.array([bx[(i + 1) % n_pts], by[(i + 1) % n_pts]])
 
-    # Use the pan edge (which aligns with the grove inner line) and inset from there
-    corners_local = [
-        (pan_x_min + inset, pan_y_min + inset),
-        (pan_x_max - inset, pan_y_min + inset),
-        (pan_x_max - inset, pan_y_max - inset),
-        (pan_x_min + inset, pan_y_max - inset),
-    ]
+        d_in = p_curr - p_prev
+        d_out = p_next - p_curr
+        len_in = np.linalg.norm(d_in)
+        len_out = np.linalg.norm(d_out)
 
-    # Additionally verify each boss is at least inset distance from nearest grove vertex
+        if len_in < 1e-8 or len_out < 1e-8:
+            turning_angles.append(0.0)
+            continue
+
+        d_in = d_in / len_in
+        d_out = d_out / len_out
+        # Exterior angle: pi minus the interior angle
+        cos_angle = np.clip(np.dot(d_in, d_out), -1.0, 1.0)
+        turning_angles.append(math.acos(cos_angle))
+
+    turning_angles = np.array(turning_angles)
+
+    # Find the 4 sharpest corners (largest turning angles)
+    # Use a minimum angular separation to avoid picking adjacent vertices
+    min_sep = max(3, n_pts // 8)  # at least 1/8 of loop apart
+    corner_indices = []
+    sorted_idx = np.argsort(turning_angles)[::-1]  # descending
+
+    for idx in sorted_idx:
+        if len(corner_indices) >= 4:
+            break
+        # Check minimum separation from already-selected corners
+        too_close = False
+        for ci in corner_indices:
+            dist = min(abs(idx - ci), n_pts - abs(idx - ci))
+            if dist < min_sep:
+                too_close = True
+                break
+        if not too_close:
+            corner_indices.append(idx)
+
+    # Step inward from each corner toward centroid by `inset` mm
     positions = []
-    for cx, cy in corners_local:
-        # Check distance to nearest grove vertex
-        grove_dists = np.sqrt((grove_lx - cx) ** 2 + (grove_ly - cy) ** 2)
-        min_grove_dist = grove_dists.min()
-
-        # If too close to grove, push toward centroid
-        if min_grove_dist < inset:
-            # Direction from corner toward centroid (0,0 in local frame)
-            dx, dy = -cx, -cy
-            d = math.sqrt(dx * dx + dy * dy)
-            if d > 0:
-                push = (inset - min_grove_dist) + 2.0  # extra 2mm margin
-                cx += push * dx / d
-                cy += push * dy / d
-
-        # Snap to nearest actual pad vertex
-        pan_dists = (pan_lx - cx) ** 2 + (pan_ly - cy) ** 2
-        nearest_idx = np.argmin(pan_dists)
-        positions.append(pan_verts[nearest_idx].copy())
+    for ci in corner_indices:
+        corner_3d = boundary_pts[ci]
+        direction = centroid - corner_3d
+        dist = np.linalg.norm(direction)
+        if dist < 1e-6:
+            positions.append(corner_3d)
+            continue
+        direction = direction / dist
+        boss_pos = corner_3d + direction * inset
+        positions.append(boss_pos)
 
     return positions
 
@@ -984,7 +1053,7 @@ def generate_notepad(note_index, obj_path, output_dir,
     # Generate M4 screw bosses near corners of the notepad
     print(f"Generating M4 screw bosses...")
     print(f"  Boss diameter: {BOSS_OUTER_DIAMETER}mm, Hole: {BOSS_HOLE_DIAMETER}mm, Height: {BOSS_HEIGHT}mm")
-    boss_positions = compute_boss_positions(pan_verts, grove_verts, pan_surface_centroid, notepad_normal, inset=BOSS_INSET)
+    boss_positions = compute_boss_positions(pan_verts, pan_faces, grove_verts, pan_surface_centroid, notepad_normal, inset=BOSS_INSET)
 
     for i, pos in enumerate(boss_positions):
         boss_verts, boss_faces = generate_screw_boss(

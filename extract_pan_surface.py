@@ -4,6 +4,9 @@ Extract only 'Pan' material objects from the tenor pan OBJ file.
 Applies the same CM_TO_MM * PAN_SCALE transform used by generate_notepad.py.
 """
 
+import json
+import os
+
 CM_TO_MM = 10.0
 PAN_SCALE = 2.0
 TOTAL_SCALE = CM_TO_MM * PAN_SCALE
@@ -84,8 +87,22 @@ def extract_pan_objects(input_path, output_path):
                 if len(new_parts) >= 3:
                     f.write("f " + " ".join(new_parts) + "\n")
 
+    # Save centroid offset for coordinate conversion
+    # centroid_original (notepad props) - offset = pan_surface coords
+    centroid_offset = [cx * TOTAL_SCALE, cy * TOTAL_SCALE, cz * TOTAL_SCALE]
+    offset_path = os.path.join(os.path.dirname(output_path), "pan_centroid_offset.json")
+    with open(offset_path, 'w') as f:
+        json.dump({
+            "centroid_offset_mm": centroid_offset,
+            "centroid_raw_cm": [cx, cy, cz],
+            "total_scale": TOTAL_SCALE,
+            "description": "Subtract centroid_offset_mm from centroid_original to get pan_surface coords"
+        }, f, indent=2)
+
     print(f"Extracted {len(pan_groups)} Pan objects ({len(sorted_indices)} vertices)")
+    print(f"Centroid offset (mm): [{centroid_offset[0]:.2f}, {centroid_offset[1]:.2f}, {centroid_offset[2]:.2f}]")
     print(f"Saved to: {output_path}")
+    print(f"Saved centroid offset to: {offset_path}")
 
 
 if __name__ == "__main__":

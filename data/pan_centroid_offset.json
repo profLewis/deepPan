@@ -1,0 +1,14 @@
+{
+  "centroid_offset_mm": [
+    -1.1048145654474166,
+    799.6015417867904,
+    0.6822649409940175
+  ],
+  "centroid_raw_cm": [
+    -0.05524072827237084,
+    39.980077089339524,
+    0.034113247049700875
+  ],
+  "total_scale": 20.0,
+  "description": "Subtract centroid_offset_mm from centroid_original to get pan_surface coords"
+}
