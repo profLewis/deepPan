@@ -16,13 +16,7 @@ layout: default
 
 ## Project Overview
 
-This project creates **3D printable note pads** for a tenor steel pan. Each of the 29 notes can be individually printed and mounted, allowing for:
-- Replacement of damaged notes
-- Experimentation with materials and tuning
-- Educational exploration of steel pan acoustics
-- Custom pan configurations
-
-The note pads are extracted from a 3D scanned tenor pan model and converted into printable solids with integrated mounting hardware.
+This project creates a **3D printable tenor steel pan** from a 3D scanned model. The pan is split into printable sections with individually mountable note pads, enabling replacement of damaged notes, experimentation with materials and tuning, and educational exploration of steel pan acoustics.
 
 ## Tenor Pan Layout
 
@@ -36,15 +30,53 @@ The tenor pan has **29 note pads** in three concentric rings:
 | Central | 12 | 5ths | 5 |
 | Inner | 5 | 6ths | 6 |
 
-## Mount System
+## Section Generator
 
-Each note pad has a three-part mounting system designed for 3D printing:
+The pan's outer ring is split into **6 printable sections** of 60° each, designed to fit a Bambu Lab P1S printer (256 x 256 x 256 mm). Each section contains 2 outer-ring notes and assembles together to reconstruct the full pan shell.
 
-1. **Note Pad** -- Extracted from a 3D scanned model, thickened to 1.5mm with an integrated threaded mounting cylinder
+| Section | Angle | Notes |
+|---------|-------|-------|
+| S0 | 15° -- 75° | O2, O1 |
+| S1 | 75° -- 135° | O0, O11 |
+| S2 | 135° -- 195° | O10, O9 |
+| S3 | 195° -- 255° | O8, O7 |
+| S4 | 255° -- 315° | O6, O5 |
+| S5 | 315° -- 15° | O4, O3 |
+
+Each section includes:
+- **Notepad pockets** -- Sunken recesses (1.5mm deep) matching each note's shape, with M4 boss through-holes for mounting
+- **Profile-following support walls** -- Radial walls along each cut edge whose top profile follows the drum surface, with M4 bolt holes and finger joints for alignment
+- **Inner arc support** -- Curved wall at R=145mm with studs and cable routing hole
+- **Drum wall** -- Original scanned drum geometry preserved without subdivision
+
+```bash
+# Generate all 6 sections
+python generate_quarter.py --all
+
+# Generate a single section
+python generate_quarter.py S0
+
+# View in Blender
+blender --python view_all_sections.py
+```
+
+## Note Pads
+
+Each of the 29 note pads is extracted from the 3D scan and converted into a printable solid with integrated mounting hardware:
+
+1. **Note Pad** -- Thickened to 1.5mm with a threaded mounting cylinder and 4 corner bosses
 2. **Mount Base** -- Screws onto the note pad, includes PCB mounting bosses (M2 holes) for electronics
 3. **Outer Sleeve** -- Protective housing with 12 grip ridges and cable routing
 
 All threads use a push-fit ring groove design (2mm pitch, 1mm depth, 0.3mm clearance) optimized for FDM printing.
+
+```bash
+# Generate all 29 note pads
+python generate_notepad.py --all
+
+# Generate a specific note pad
+python generate_notepad.py O5
+```
 
 ## Sound Design
 
@@ -74,6 +106,14 @@ python generate_sounds.py --preset bright
 # Analyze a WAV file to extract parameters
 python analyze_audio.py sample.wav --output params.json
 ```
+
+## Pipeline Summary
+
+| Step | Script | Output |
+|------|--------|--------|
+| Extract pan surface | `extract_pan_surface.py` | Centered bowl mesh |
+| Generate note pads | `generate_notepad.py --all` | 29 note pad OBJ/STL + properties |
+| Generate sections | `generate_quarter.py --all` | 6 section OBJ/STL + properties |
 
 ## Source
 

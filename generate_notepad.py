@@ -1212,7 +1212,7 @@ def main():
             note_index = sys.argv[1]
             result = generate_notepad(note_index, obj_path, output_dir)
             if result:
-                save_notepad_properties([result], Path(output_dir) / f"notepad_{note_index}_properties.json")
+                save_notepad_properties([result], Path(output_dir) / "notepad_properties.json")
             return
 
     # Default: generate test note O0
