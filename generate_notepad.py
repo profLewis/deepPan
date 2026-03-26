@@ -1586,9 +1586,9 @@ def generate_notepad(note_index, obj_path, output_dir,
                     outward = outward / ol if ol > 1e-8 else np.array([1, 0, 0])
 
                 radial_dist = np.linalg.norm(pt - boundary_centroid)
-                # Use percentage-based OR minimum extension (keeps flange
-                # compact to avoid overlap). I4 gets more room for screw holes.
-                min_ext = 5.0 if note_index == 'I4' else 4.0
+                # Use percentage-based OR minimum extension.
+                # Must be large enough for pin head (1.9mm r) + edge margin.
+                min_ext = 6.5 if note_index == 'I4' else 6.0
                 extension = max(radial_dist * (groove_spread - 1.0), min_ext)
                 ext_pt = pt + outward * extension
                 extended_pts.append(ext_pt)
@@ -1756,7 +1756,7 @@ def generate_notepad(note_index, obj_path, output_dir,
         # the pad, reject any too close to the edge or the hardware zone,
         # then greedily pick well-separated positions.
         if ring == 'inner':
-            MIN_EDGE_DIST = 1.5   # mm from flange boundary
+            MIN_EDGE_DIST = 2.2   # mm — pin head radius (1.9mm) + margin
             MIN_HW_DIST = 1.5     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 2         # 2 screws for inner pads
@@ -2129,7 +2129,11 @@ def main():
             print("Generating all 29 note pads...")
             results = []
             # Clone map: only pads with broken source geometry
-            clone_map = {'I4': 'I1'}
+            clone_map = {
+                'I4': 'I1',    # broken source geometry
+                'O3': 'O2',    # rotated clone (O3/O9 have internal geometry issues)
+                'O9': 'O8',
+            }
 
             for note_index in sorted(NOTE_BY_INDEX.keys()):
                 clone_src = clone_map.get(note_index)
