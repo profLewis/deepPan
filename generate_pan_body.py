@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""
+Generate solid pan body via voxelisation.
+
+Features:
+- Bowl surface with 5mm pad pockets (flush fit)
+- Hardware through-holes (MountBase+Sleeve, buffered 2.5mm, clipped to pads)
+- Screw pilot holes (1.8mm, 4mm deep)
+- Cylindrical base plate (10mm thick, separate piece)
+- Wiring void (cylinder inset 15mm from edge, 50mm tall above base)
+
+Coordinates match pan_surface_up.obj and assembly_view.obj (R_level, Y=drum axis).
+
+Usage:
+    python generate_pan_body.py [--res=0.3] [--sdf] [--sigma=0.5] [--save-grid]
+
+    --sdf          Use signed distance field for smooth mesh extraction
+                   (eliminates staircase artifacts while preserving sharp edges)
+    --sigma=X      Gaussian smoothing sigma in voxels (implies --sdf, default 0.5)
+    --save-grid    Save binary grids to .npz for fast re-extraction
+"""
+
+import numpy as np
+import json
+import struct
+import gc
+import sys
+from scipy.interpolate import griddata
+from scipy.spatial import ConvexHull
+from shapely.geometry import Polygon
+from matplotlib.path import Path as MplPath
+from skimage.measure import marching_cubes
+
+from generate_sector import extract_bowl_surface
+from generate_notepad import (
+    compute_leveling_rotation, NOTE_BY_INDEX, NOTE_MAPPING, PAN_THICKNESS
+)
+from generate_quarter import classify_drum_wall, reindex_mesh, subdivide_mesh
+
+# ============================================================
+# Parameters
+# ============================================================
+
+POCKET_DEPTH = PAN_THICKNESS   # 5mm — pad sits flush
+POCKET_TOLERANCE = 1.0         # mm extra around pad footprint for fit
+HW_BUFFER = 2.5                # mm clearance around hardware
+PILOT_R = 1.0                  # mm — M2 pilot hole radius (2mm dia)
+PILOT_DEPTH = 5.0              # mm — visible from pocket floor
+BASE_THICKNESS = 10.0          # mm — base plate
+VOID_INSET = 15.0              # mm from drum edge
+VOID_CLEARANCE = 20.0          # mm below underside of pan surface
+SUBDIVIDE_ROUNDS = 2
+
+# Groove embedding — pad top sits this far below playing surface
+# to match the groove inner edge height
+GROOVE_STEP = 0.1                  # mm — must match STEP_INNER in generate_grooves.py
+
+# Base attachment screws
+BASE_SCREW_N = 8               # number of M3 screws around perimeter
+BASE_SCREW_INSET = 12.0        # mm from drum outer edge
+BASE_SCREW_PILOT_R = 1.25      # mm — M3 tapped pilot hole radius
+BASE_SCREW_CLEAR_R = 1.7       # mm — M3 clearance in base plate
+BASE_SCREW_DEPTH = 8.0         # mm — pilot hole depth into drum body
+
+
+def _sdf_extract(padded, res, sigma):
+    """SDF-based mesh extraction from padded binary grid.
+
+    Computes signed distance field via Euclidean distance transform, then
+    extracts the zero-level isosurface with marching cubes.  For grids > 2B
+    voxels the float64→float32 conversion is spilled to disk so peak RAM
+    stays below ~57 GB.
+    """
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+    shape = padded.shape
+    pb = padded.view(np.bool_)
+
+    if padded.size < 2_000_000_000:
+        # --- in-memory path ---
+        print("  SDF interior...")
+        sdf = distance_transform_edt(pb).astype(np.float32)
+        print("  SDF exterior...")
+        np.logical_not(pb, out=pb)
+        sdf -= distance_transform_edt(pb).astype(np.float32)
+    else:
+        # --- disk-spill path ---
+        import os, tempfile
+        td = tempfile.mkdtemp(prefix='pan_sdf_')
+        pin = os.path.join(td, 'in.f32')
+        pex = os.path.join(td, 'ex.f32')
+
+        print(f"  SDF interior (disk-spill, {padded.size / 1e9:.1f}B voxels)...")
+        d = distance_transform_edt(pb)
+        with open(pin, 'wb') as f:
+            for i in range(shape[0]):
+                f.write(d[i].astype(np.float32).tobytes())
+        del d; gc.collect()
+
+        print("  SDF exterior (disk-spill)...")
+        np.logical_not(pb, out=pb)
+        d = distance_transform_edt(pb)
+        with open(pex, 'wb') as f:
+            for i in range(shape[0]):
+                f.write(d[i].astype(np.float32).tobytes())
+        del d; gc.collect()
+
+        print("  Combining SDF from disk...")
+        mi = np.memmap(pin, dtype=np.float32, mode='r', shape=shape)
+        me = np.memmap(pex, dtype=np.float32, mode='r', shape=shape)
+        sdf = np.empty(shape, dtype=np.float32)
+        cs = max(1, shape[0] // 20)
+        for i in range(0, shape[0], cs):
+            e = min(i + cs, shape[0])
+            sdf[i:e] = mi[i:e] - me[i:e]
+        del mi, me; gc.collect()
+        os.remove(pin); os.remove(pex); os.rmdir(td)
+
+    if sigma > 0:
+        print(f"  Gaussian sigma={sigma:.1f}...")
+        gaussian_filter(sdf, sigma=sigma, output=sdf)
+
+    print("  Marching cubes (SDF level=0)...")
+    verts, faces, _, _ = marching_cubes(sdf, level=0.0, spacing=(res, res, res))
+    del sdf; gc.collect()
+    return verts, faces
+
+
+def main():
+    # Parse args
+    res = 0.5
+    use_sdf = '--sdf' in sys.argv
+    sigma = 0.0
+    save_grid = '--save-grid' in sys.argv
+    for arg in sys.argv[1:]:
+        if arg.startswith('--res='):
+            res = float(arg.split('=')[1])
+        elif arg.startswith('--sigma='):
+            sigma = float(arg.split('=')[1])
+            use_sdf = True
+    if use_sdf and sigma == 0:
+        sigma = 0.5
+    if use_sdf:
+        from scipy.ndimage import distance_transform_edt, gaussian_filter
+
+    print("=" * 60)
+    print(f"Pan Body — {res}mm, {HW_BUFFER}mm buffer, {POCKET_DEPTH}mm pockets")
+    print(f"  Base: {BASE_THICKNESS}mm, Void: {VOID_INSET}mm inset, {VOID_CLEARANCE}mm below surface")
+    if use_sdf:
+        print(f"  SDF extraction, sigma={sigma:.1f} voxels ({sigma*res:.2f}mm)")
+    print("=" * 60)
+
+    # Phase 1: Load + level
+    print("\nPhase 1: Load + level...")
+    bowl_v, bowl_f, face_mat, face_group, pan_offset = extract_bowl_surface(
+        "data/Tenor Pan only.obj")
+    R_level = compute_leveling_rotation("data/Tenor Pan only.obj")
+    bowl_v = (R_level @ bowl_v.T).T
+
+    is_dw = classify_drum_wall(bowl_v, bowl_f)
+    dw_vi = set()
+    for fi, face in enumerate(bowl_f):
+        if is_dw[fi]:
+            for vi in face:
+                dw_vi.add(vi)
+    dw_v = bowl_v[sorted(dw_vi)]
+    drum_r = float(np.sqrt(dw_v[:, 0]**2 + dw_v[:, 2]**2).max())
+    y_min = float(bowl_v[:, 1].min())
+    rim_y = float(dw_v[:, 1].max())
+    print(f"  R={drum_r:.0f}, Y=[{y_min:.0f},{rim_y:.0f}]")
+
+    # Phase 2: Subdivide playing surface
+    print("\nPhase 2: Subdivide...")
+    ps_faces = [bowl_f[fi] for fi in range(len(bowl_f)) if not is_dw[fi]]
+    ps_groups = [face_group[fi] for fi in range(len(bowl_f)) if not is_dw[fi]]
+    note_pan_groups = set(p for (g, p) in NOTE_MAPPING.keys())
+    ps_is_pocket = [g in note_pan_groups for g in ps_groups]
+    ps_v, ps_f = reindex_mesh(bowl_v, ps_faces)
+    for rnd in range(SUBDIVIDE_ROUNDS):
+        ps_v, ps_f, ps_is_pocket = subdivide_mesh(ps_v, ps_f, ps_is_pocket)
+    print(f"  {len(ps_v)}v {len(ps_f)}f, {sum(ps_is_pocket)} pocket faces")
+
+    # Phase 3: Assembly hardware
+    print("\nPhase 3: Hardware...")
+    a_verts = []
+    a_objects = {}
+    a_current = None
+    with open('data/notepads/assembly_view.obj') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('v '):
+                p = line.split()
+                a_verts.append([float(p[1]), float(p[2]), float(p[3])])
+            elif line.startswith('o '):
+                a_current = line[2:]
+                a_objects[a_current] = set()
+            elif line.startswith('f ') and a_current:
+                for p in line.split()[1:]:
+                    try:
+                        a_objects[a_current].add(int(p.split('/')[0]) - 1)
+                    except ValueError:
+                        pass
+    a_verts = np.array(a_verts)
+
+    hw_shapes = {}
+    for note in sorted(NOTE_BY_INDEX.keys()):
+        hw_xz = []
+        for prefix in ['MountBase_', 'Sleeve_']:
+            key = prefix + note
+            if key in a_objects:
+                hv = a_verts[sorted(a_objects[key])]
+                hw_xz.append(hv[:, [0, 2]])
+        if not hw_xz:
+            continue
+        all_hw = np.vstack(hw_xz)
+        hull = ConvexHull(all_hw)
+        hw_poly = Polygon(all_hw[hull.vertices])
+
+        # Make mask symmetric about pad's long axis (PCA) for PCB clearance
+        pd_key = f'Pad_{note}'
+        if pd_key in a_objects:
+            pv = a_verts[sorted(a_objects[pd_key])]
+            pad_xz = pv[:, [0, 2]]
+            pad_centroid_xz = pad_xz.mean(axis=0)
+            centered_xz = pad_xz - pad_centroid_xz
+            cov_xz = centered_xz.T @ centered_xz
+            eigvals_xz, eigvecs_xz = np.linalg.eigh(cov_xz)
+            long_axis = eigvecs_xz[:, np.argmax(eigvals_xz)]
+
+            # Reflect hw_poly about line through pad centroid along long_axis
+            coords = np.array(hw_poly.exterior.coords)
+            rel = coords - pad_centroid_xz
+            proj = np.outer(rel @ long_axis, long_axis)
+            reflected = pad_centroid_xz + 2 * proj - rel
+            mirror_poly = Polygon(reflected)
+            hw_poly = hw_poly.union(mirror_poly)
+            if hw_poly.geom_type == 'MultiPolygon':
+                hw_poly = hw_poly.convex_hull
+
+            pad_poly = Polygon(pad_xz[ConvexHull(pad_xz).vertices])
+            clipped = pad_poly.intersection(hw_poly)
+        else:
+            clipped = hw_poly
+        if not clipped.is_empty:
+            buffered = clipped.buffer(HW_BUFFER)
+            if pd_key in a_objects:
+                buffered = pad_poly.intersection(buffered)
+            if buffered.geom_type == 'Polygon' and not buffered.is_empty:
+                hw_shapes[note] = MplPath(np.array(buffered.exterior.coords))
+    print(f"  {len(hw_shapes)} hw holes (symmetric, buffered {HW_BUFFER}mm)")
+
+    props = json.load(open('data/notepads/notepad_properties.json'))
+    offset = np.array(
+        json.load(open('data/pan_centroid_offset.json'))['centroid_offset_mm'])
+    screw_holes = []
+    for p in props:
+        for hp in p.get('hole_positions', []):
+            h = R_level @ (np.array(hp) - offset)
+            screw_holes.append((h[0], h[1], h[2]))
+    print(f"  {len(screw_holes)} screw holes")
+
+    # Phase 3b: Load groove top surfaces for embedding into body
+    print("\nPhase 3b: Groove surfaces...")
+    from pathlib import Path as PathLib
+    groove_top_surfaces = {}
+    for ring_name in ['outer', 'central', 'inner']:
+        groove_path = f'data/grooves/grooves_{ring_name}.obj'
+        if not PathLib(groove_path).exists():
+            continue
+        all_gv = []
+        current_gobj = None
+        gobj_ranges = {}
+        with open(groove_path) as gf:
+            for line in gf:
+                line = line.strip()
+                if line.startswith('o '):
+                    if current_gobj is not None:
+                        gobj_ranges[current_gobj] = (gobj_ranges[current_gobj][0], len(all_gv))
+                    current_gobj = line[2:]
+                    gobj_ranges[current_gobj] = (len(all_gv), len(all_gv))
+                elif line.startswith('v '):
+                    p = line.split()
+                    all_gv.append([float(p[1]), float(p[2]), float(p[3])])
+        if current_gobj is not None:
+            gobj_ranges[current_gobj] = (gobj_ranges[current_gobj][0], len(all_gv))
+        if not all_gv:
+            continue
+        all_gv = np.array(all_gv)
+        for gobj_name, (v_start, v_end) in gobj_ranges.items():
+            note_key = gobj_name.replace('Groove_', '')
+            n_total = v_end - v_start
+            n_top = n_total // 2  # first half is top surface (tapered)
+            groove_top_surfaces[note_key] = all_gv[v_start:v_start + n_top]
+    print(f"  {len(groove_top_surfaces)} groove surfaces loaded")
+
+    # Phase 4: Heightmap + pockets
+    print("\nPhase 4: Heightmap...")
+    n_ps = len(ps_v)
+    v_pocket_count = np.zeros(n_ps, dtype=int)
+    v_face_count = np.zeros(n_ps, dtype=int)
+    for fi, face in enumerate(ps_f):
+        for vi in face:
+            v_face_count[vi] += 1
+            if ps_is_pocket[fi]:
+                v_pocket_count[vi] += 1
+    v_is_pocket = (v_pocket_count == v_face_count) & (v_face_count > 0)
+
+    surface_y = ps_v[:, 1].copy()
+    for i in range(n_ps):
+        if v_is_pocket[i]:
+            surface_y[i] -= POCKET_DEPTH
+
+    margin = res * 2
+    x_range = np.arange(-drum_r - margin, drum_r + margin + res, res)
+    z_range = np.arange(-drum_r - margin, drum_r + margin + res, res)
+    y_range = np.arange(y_min - margin, rim_y + margin + res, res)
+    nx, ny, nz = len(x_range), len(y_range), len(z_range)
+    print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M ({res}mm)")
+
+    XI, ZI = np.meshgrid(x_range, z_range, indexing='ij')
+    print("  Interpolating...")
+    height_map = griddata(ps_v[:, [0, 2]], surface_y, (XI, ZI), method='linear')
+    RR = np.sqrt(XI**2 + ZI**2)
+    inside_drum = RR <= drum_r
+    height_map[np.isnan(height_map) & inside_drum] = rim_y
+    col_top = np.full((nx, nz), y_min)
+    valid = ~np.isnan(height_map) & inside_drum
+    col_top[valid] = height_map[valid]
+    iy_top = np.clip(((col_top - y_range[0]) / res).astype(np.int32) + 1, 0, ny)
+
+    # Compute void ceiling: original surface Y - VOID_CLEARANCE per column
+    ps_vi_all = sorted(set(vi for fi, f in enumerate(bowl_f) if not is_dw[fi] for vi in f))
+    ps_pts = bowl_v[ps_vi_all][:, [0, 2]]
+    ps_yvals = bowl_v[ps_vi_all][:, 1]
+    XI2, ZI2 = np.meshgrid(x_range, z_range, indexing='ij')
+    orig_height = griddata(ps_pts, ps_yvals, (XI2, ZI2), method='nearest')
+    void_top_map = orig_height - VOID_CLEARANCE
+    del orig_height, XI2, ZI2, ps_pts, ps_yvals, ps_vi_all
+
+    del XI, ZI, height_map, surface_y, ps_v, ps_f, v_pocket_count, v_face_count
+    gc.collect()
+
+    # Phase 5: Fill solid
+    print("\nPhase 5: Fill...")
+    grid = np.zeros((nx, ny, nz), dtype=np.uint8)
+    for ix in range(nx):
+        for iz in range(nz):
+            iy_end = iy_top[ix, iz]
+            if iy_end > 0 and inside_drum[ix, iz]:
+                grid[ix, :iy_end, iz] = 1
+    n_solid = int(grid.sum())
+    print(f"  {n_solid / 1e6:.0f}M voxels")
+
+    # Phase 5b: Carve pad pockets from assembly_view Pad footprints
+    # Ensures ALL pads (including inner) get proper indentations
+    print("\nPhase 5b: Assembly pad pockets...")
+    n_pocketed = 0
+    for note in sorted(NOTE_BY_INDEX.keys()):
+        pd_key = f'Pad_{note}'
+        if pd_key not in a_objects:
+            continue
+        pv = a_verts[sorted(a_objects[pd_key])]
+        pad_xz = pv[:, [0, 2]]
+        pad_y_top = float(pv[:, 1].max())
+        pocket_floor_y = pad_y_top - POCKET_DEPTH - GROOVE_STEP
+
+        try:
+            hull = ConvexHull(pad_xz)
+            pad_poly = Polygon(pad_xz[hull.vertices])
+            # Add tolerance so pad fits easily
+            pad_poly_buffered = pad_poly.buffer(POCKET_TOLERANCE)
+            if pad_poly_buffered.geom_type == 'Polygon':
+                pad_path = MplPath(np.array(pad_poly_buffered.exterior.coords))
+            else:
+                pad_path = MplPath(pad_xz[hull.vertices])
+        except:
+            continue
+
+        bounds = pad_path.get_extents()
+        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
+        if n_ix <= 0 or n_iz <= 0:
+            continue
+
+        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
+                             z_range[iz_min:iz_max + 1], indexing='ij')
+        inside = pad_path.contains_points(
+            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+
+        iy_floor = max(0, int((pocket_floor_y - y_range[0]) / res))
+        iy_top_pad = min(ny, int((pad_y_top - y_range[0]) / res) + 2)
+
+        for di in range(n_ix):
+            for dj in range(n_iz):
+                if inside[di, dj]:
+                    grid[ix_min + di, iy_floor:iy_top_pad, iz_min + dj] = 0
+                    n_pocketed += 1
+    print(f"  Pocketed {n_pocketed} columns for {len(NOTE_BY_INDEX)} pads")
+
+    # Phase 5c: Carve groove channels into surface
+    print("\nPhase 5c: Groove channels...")
+    n_groove_carved = 0
+    for note_key, top_verts in groove_top_surfaces.items():
+        if len(top_verts) < 3:
+            continue
+        gxz = top_verts[:, [0, 2]]
+        gy = top_verts[:, 1]
+        gx_min, gz_min = gxz.min(axis=0)
+        gx_max, gz_max = gxz.max(axis=0)
+        ix_lo = max(0, int((gx_min - x_range[0]) / res) - 1)
+        ix_hi = min(nx - 1, int((gx_max - x_range[0]) / res) + 2)
+        iz_lo = max(0, int((gz_min - z_range[0]) / res) - 1)
+        iz_hi = min(nz - 1, int((gz_max - z_range[0]) / res) + 2)
+        n_gix = ix_hi - ix_lo + 1
+        n_giz = iz_hi - iz_lo + 1
+        if n_gix <= 0 or n_giz <= 0:
+            continue
+        GX, GZ = np.meshgrid(x_range[ix_lo:ix_hi + 1],
+                              z_range[iz_lo:iz_hi + 1], indexing='ij')
+        groove_y_map = griddata(gxz, gy, (GX, GZ), method='linear')
+        try:
+            ghull = ConvexHull(gxz)
+            gpath = MplPath(gxz[ghull.vertices])
+            g_inside = gpath.contains_points(
+                np.column_stack([GX.ravel(), GZ.ravel()])).reshape(n_gix, n_giz)
+        except Exception:
+            continue
+        for di in range(n_gix):
+            for dj in range(n_giz):
+                if not g_inside[di, dj] or np.isnan(groove_y_map[di, dj]):
+                    continue
+                groove_surf_y = groove_y_map[di, dj]
+                iy_groove = int((groove_surf_y - y_range[0]) / res) + 1
+                ix_abs = ix_lo + di
+                iz_abs = iz_lo + dj
+                # Only carve up to original surface (iy_top), not through drum wall
+                iy_ceil = iy_top[ix_abs, iz_abs]
+                if 0 <= iy_groove < iy_ceil:
+                    n_groove_carved += int(grid[ix_abs, iy_groove:iy_ceil, iz_abs].sum())
+                    grid[ix_abs, iy_groove:iy_ceil, iz_abs] = 0
+    print(f"  Carved {n_groove_carved / 1e6:.1f}M groove voxels from {len(groove_top_surfaces)} grooves")
+
+    # Phase 6: Carve wiring void
+    # Cylinder: radius = drum_r - VOID_INSET, height = VOID_HEIGHT
+    # Sits on top of base plate (Y from y_min + BASE_THICKNESS to
+    # y_min + BASE_THICKNESS + VOID_HEIGHT)
+    # Wiring void: cylinder from base plate top up to VOID_CLEARANCE below
+    # the pan surface. Uses pre-computed void_top_map.
+    print("\nPhase 6: Wiring void...")
+    void_r = drum_r - VOID_INSET
+    void_y_bot = y_min + BASE_THICKNESS
+    iy_void_bot = max(0, int((void_y_bot - y_range[0]) / res))
+    print(f"  R={void_r:.0f}mm, {VOID_CLEARANCE}mm below surface, base at Y={void_y_bot:.0f}")
+
+    n_void = 0
+    for ix in range(nx):
+        for iz in range(nz):
+            r = np.sqrt(x_range[ix]**2 + z_range[iz]**2)
+            if r <= void_r:
+                vt = void_top_map[ix, iz]
+                if np.isnan(vt):
+                    vt = rim_y - VOID_CLEARANCE
+                iy_void_top = min(ny, int((vt - y_range[0]) / res) + 1)
+                if iy_void_top > iy_void_bot:
+                    before = grid[ix, iy_void_bot:iy_void_top, iz].sum()
+                    grid[ix, iy_void_bot:iy_void_top, iz] = 0
+                    n_void += before
+    del void_top_map
+    print(f"  Voided {n_void / 1e6:.1f}M voxels")
+
+    del iy_top, inside_drum, col_top, valid
+    gc.collect()
+
+    # Phase 7: Hardware holes — stop at base plate top (don't go through base)
+    print("\nPhase 7: Hardware holes (stop at base)...")
+    iy_base_top = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
+    for note, path in hw_shapes.items():
+        bounds = path.get_extents()
+        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
+        if n_ix <= 0 or n_iz <= 0:
+            continue
+        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
+                             z_range[iz_min:iz_max + 1], indexing='ij')
+        inside = path.contains_points(
+            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+        for di in range(n_ix):
+            for dj in range(n_iz):
+                if inside[di, dj]:
+                    # Clear from base top to surface (not through base)
+                    grid[ix_min + di, iy_base_top:, iz_min + dj] = 0
+    n_after = int(grid.sum())
+    print(f"  {n_after / 1e6:.0f}M voxels")
+
+    # Phase 8: Pad screw pilot holes (M2, from pocket floor downward)
+    # The screw goes through the pad (clearance hole) and threads into
+    # the drum body below the pocket floor. The pilot hole must be
+    # visible from above (starts at the pocket floor, goes PILOT_DEPTH down).
+    print("\nPhase 8: Pad screw holes...")
+    for hx, hy, hz in screw_holes:
+        ix_min = max(0, int((hx - PILOT_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((hx + PILOT_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((hz - PILOT_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((hz + PILOT_R - z_range[0]) / res) + 2)
+        # hy is the surface Y at the screw position.
+        # The pocket floor is at hy - POCKET_DEPTH.
+        # The pilot hole goes from pocket floor down PILOT_DEPTH further.
+        pocket_floor = hy - POCKET_DEPTH
+        iy_top = int((pocket_floor - y_range[0]) / res) + 1
+        iy_bot = max(0, int((pocket_floor - PILOT_DEPTH - y_range[0]) / res))
+        for ix in range(ix_min, ix_max + 1):
+            dx = x_range[ix] - hx
+            for iz in range(iz_min, iz_max + 1):
+                dz = z_range[iz] - hz
+                if dx * dx + dz * dz <= PILOT_R * PILOT_R:
+                    grid[ix, iy_bot:iy_top, iz] = 0
+    print(f"  {len(screw_holes)} pad screw holes (2mm dia, {PILOT_DEPTH}mm deep)")
+
+    # Phase 8b: Base attachment screw holes
+    # M3 pilot holes in drum body (tapped), clearance holes in base plate
+    # Arranged around the perimeter
+    print("\nPhase 8b: Base attachment screws...")
+    import math
+    base_screw_r = drum_r - BASE_SCREW_INSET
+    base_screw_positions = []
+    for si in range(BASE_SCREW_N):
+        angle = 2 * math.pi * si / BASE_SCREW_N
+        sx = base_screw_r * math.cos(angle)
+        sz = base_screw_r * math.sin(angle)
+        # Y position: pilot hole goes UP into drum body from base plate top
+        sy = y_min + BASE_THICKNESS  # starts at base plate top
+        base_screw_positions.append((sx, sy, sz))
+
+        # Pilot hole in drum body (above base plate)
+        iy_bot_screw = int((sy - y_range[0]) / res)
+        iy_top_screw = min(ny, int((sy + BASE_SCREW_DEPTH - y_range[0]) / res) + 1)
+        ix_min = max(0, int((sx - BASE_SCREW_PILOT_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + BASE_SCREW_PILOT_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - BASE_SCREW_PILOT_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + BASE_SCREW_PILOT_R - z_range[0]) / res) + 2)
+        for ix in range(ix_min, ix_max + 1):
+            dx = x_range[ix] - sx
+            for iz in range(iz_min, iz_max + 1):
+                dz = z_range[iz] - sz
+                if dx * dx + dz * dz <= BASE_SCREW_PILOT_R ** 2:
+                    grid[ix, iy_bot_screw:iy_top_screw, iz] = 0
+
+    n_final = int(grid.sum())
+    print(f"  {BASE_SCREW_N} base screws at R={base_screw_r:.0f}mm")
+    print(f"  Final body: {n_final / 1e6:.0f}M voxels")
+
+    # Phase 9: Separate base plate
+    print("\nPhase 9: Separate base plate...")
+    iy_base_top_sep = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
+    base_grid = grid[:, :iy_base_top_sep, :].copy()
+    grid[:, :iy_base_top_sep, :] = 0  # remove base from main body
+    print(f"  Base: Y < {y_min + BASE_THICKNESS:.0f}mm, "
+          f"{int(base_grid.sum()) / 1e6:.0f}M voxels")
+    print(f"  Body without base: {int(grid.sum()) / 1e6:.0f}M voxels")
+
+    # Drill M3 clearance holes through base plate for attachment screws
+    print("  Drilling base clearance holes...")
+    for sx, sy, sz in base_screw_positions:
+        ix_min = max(0, int((sx - BASE_SCREW_CLEAR_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + BASE_SCREW_CLEAR_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - BASE_SCREW_CLEAR_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + BASE_SCREW_CLEAR_R - z_range[0]) / res) + 2)
+        for ix in range(ix_min, ix_max + 1):
+            dx = x_range[ix] - sx
+            for iz in range(iz_min, iz_max + 1):
+                dz = z_range[iz] - sz
+                if dx * dx + dz * dz <= BASE_SCREW_CLEAR_R ** 2:
+                    base_grid[ix, :, iz] = 0  # through-hole in base
+    print(f"  Base after holes: {int(base_grid.sum()) / 1e6:.0f}M voxels")
+
+    if save_grid:
+        gpath = f'data/pan_body_{res}mm_grid.npz'
+        print(f"\n  Saving grids to {gpath}...")
+        np.savez_compressed(gpath, body=grid, base=base_grid,
+                            x_range=x_range, y_range=y_range,
+                            z_range=z_range, res=np.array([res]))
+        print("  Saved.")
+
+    # Phase 10: Marching cubes — main body
+    print("\nPhase 10: Marching cubes (body)...")
+    padded = np.pad(grid, 1, mode='constant', constant_values=0)
+    del grid; gc.collect()
+    if use_sdf:
+        verts_body, faces_body = _sdf_extract(padded, res, sigma)
+    else:
+        verts_body, faces_body, _, _ = marching_cubes(
+            padded, level=0.5, spacing=(res, res, res))
+    del padded; gc.collect()
+    verts_body[:, 0] += x_range[0] - res
+    verts_body[:, 1] += y_range[0] - res
+    verts_body[:, 2] += z_range[0] - res
+    print(f"  Body: {len(verts_body)}v, {len(faces_body)}f")
+
+    # Phase 11: Marching cubes — base plate
+    print("\nPhase 11: Marching cubes (base)...")
+    padded_base = np.pad(base_grid, 1, mode='constant', constant_values=0)
+    del base_grid; gc.collect()
+    if use_sdf:
+        verts_base, faces_base = _sdf_extract(padded_base, res, sigma)
+    else:
+        verts_base, faces_base, _, _ = marching_cubes(
+            padded_base, level=0.5, spacing=(res, res, res))
+    del padded_base; gc.collect()
+    verts_base[:, 0] += x_range[0] - res
+    verts_base[:, 1] += y_range[0] - res
+    verts_base[:, 2] += z_range[0] - res
+    print(f"  Base: {len(verts_base)}v, {len(faces_base)}f")
+
+    # Phase 12: Export
+    tag = f'_{res}mm' if res != 0.5 else ''
+    if use_sdf:
+        tag += '_sdf'
+    print(f"\nPhase 12: Export (pan_body{tag})...")
+
+    # Combined OBJ with named objects
+    with open(f'data/pan_body{tag}.obj', 'w') as f:
+        f.write("# Pan body + base plate\n# Units: mm\n\n")
+        f.write("o DrumBody\n")
+        for v in verts_body:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        f.write("\n")
+        for face in faces_body:
+            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+        f.write("\n")
+        n_body = len(verts_body)
+        f.write("o BasePlate\n")
+        for v in verts_base:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        f.write("\n")
+        for face in faces_base:
+            f.write(f"f {face[0]+1+n_body} {face[1]+1+n_body} {face[2]+1+n_body}\n")
+    print(f"  pan_body{tag}.obj (DrumBody + BasePlate)")
+
+    # Separate OBJ files for drum body and base plate
+    with open(f'data/pan_drum{tag}.obj', 'w') as f:
+        f.write("# Drum body (no base plate)\n# Units: mm\n\n")
+        f.write("o DrumBody\n")
+        for v in verts_body:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        f.write("\n")
+        for face in faces_body:
+            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+    print(f"  pan_drum{tag}.obj (DrumBody only)")
+
+    with open(f'data/pan_base{tag}.obj', 'w') as f:
+        f.write("# Base plate\n# Units: mm\n\n")
+        f.write("o BasePlate\n")
+        for v in verts_base:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        f.write("\n")
+        for face in faces_base:
+            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+    print(f"  pan_base{tag}.obj (BasePlate only)")
+
+    # Separate STL files
+    def _write_stl(path, label, verts, faces):
+        with open(path, 'wb') as f:
+            f.write(label.encode().ljust(80, b'\0'))
+            f.write(struct.pack('<I', len(faces)))
+            for tri in faces:
+                v0, v1, v2 = verts[tri[0]], verts[tri[1]], verts[tri[2]]
+                n = np.cross(v1 - v0, v2 - v0)
+                nl = np.linalg.norm(n)
+                if nl > 0:
+                    n /= nl
+                f.write(struct.pack('<3f', *n))
+                f.write(struct.pack('<3f', *v0))
+                f.write(struct.pack('<3f', *v1))
+                f.write(struct.pack('<3f', *v2))
+                f.write(struct.pack('<H', 0))
+
+    _write_stl(f'data/pan_drum{tag}.stl', 'STL drum body', verts_body, faces_body)
+    print(f"  pan_drum{tag}.stl ({len(faces_body)} tri)")
+
+    _write_stl(f'data/pan_base{tag}.stl', 'STL base plate', verts_base, faces_base)
+    print(f"  pan_base{tag}.stl ({len(faces_base)} tri)")
+
+    # Combined STL (for convenience)
+    all_verts = np.vstack([verts_body, verts_base])
+    all_faces = list(faces_body) + [[f[0] + n_body, f[1] + n_body, f[2] + n_body]
+                                     for f in faces_base]
+    _write_stl(f'data/pan_body{tag}.stl', 'STL pan body', all_verts, all_faces)
+    print(f"  pan_body{tag}.stl ({len(all_faces)} tri, combined)")
+    print("\nDone!")
+
+
+if __name__ == "__main__":
+    main()

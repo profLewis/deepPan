@@ -1,0 +1,16 @@
+# Generated data (regenerate with scripts)
+data/notepads/*.obj
+data/notepads/*.stl
+data/notepads/*.png
+data/notepads/cap.*
+data/quarters/*.obj
+data/quarters/*.stl
+data/mounts/*.obj
+data/mounts/*.stl
+data/pan_body*.obj
+data/pan_body*.stl
+data/pan_body*.npz
+data/pan_surface_up*.obj
+data/pan_surface_up*.stl
+data/pan_shell*.obj
+data/*.png
