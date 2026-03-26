@@ -25,6 +25,7 @@ import json
 import struct
 import gc
 import sys
+import math
 from scipy.interpolate import griddata
 from scipy.spatial import ConvexHull
 from shapely.geometry import Polygon
@@ -492,38 +493,36 @@ def main():
     # Vertical cylinder through drum center, 250mm OD, 10mm wall, clipped at surface.
     print("\nPhase 6b: Inner structural cylinder...")
     inner_cyl_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
-    n_inner_cyl = 0
     iy_base_top_cyl = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
+    # Precompute R^2 grid for XZ plane
+    XX, ZZ = np.meshgrid(x_range, z_range, indexing='ij')
+    RR_sq = XX**2 + ZZ**2
+    inner_cyl_xz = (RR_sq >= INNER_CYL_INNER_R**2) & (RR_sq <= INNER_CYL_OUTER_R**2)
+    iy_top_map = np.clip(((col_top - y_range[0]) / res).astype(np.int32), 0, ny)
     for ix in range(nx):
         for iz in range(nz):
-            r_sq = x_range[ix]**2 + z_range[iz]**2
-            if INNER_CYL_INNER_R**2 <= r_sq <= INNER_CYL_OUTER_R**2:
-                # Clip at drum surface (col_top gives the surface Y)
-                surf_y = col_top[ix, iz]
-                iy_top_cyl = min(ny, int((surf_y - y_range[0]) / res))
+            if inner_cyl_xz[ix, iz]:
+                iy_top_cyl = iy_top_map[ix, iz]
                 if iy_top_cyl > iy_base_top_cyl:
-                    for iy in range(iy_base_top_cyl, iy_top_cyl):
-                        grid[ix, iy, iz] = 1
-                        inner_cyl_mask[ix, iy, iz] = 1
-                        n_inner_cyl += 1
+                    grid[ix, iy_base_top_cyl:iy_top_cyl, iz] = 1
+                    inner_cyl_mask[ix, iy_base_top_cyl:iy_top_cyl, iz] = 1
+    n_inner_cyl = int(inner_cyl_mask.sum())
     print(f"  Inner cyl: R=[{INNER_CYL_INNER_R:.0f}, {INNER_CYL_OUTER_R:.0f}]mm, "
           f"{n_inner_cyl / 1e6:.1f}M voxels")
 
     # ── Phase 6c: Outer structural cylinder ──────────────────────────
     print("\nPhase 6c: Outer structural cylinder...")
     outer_cyl_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
-    n_outer_cyl = 0
+    outer_cyl_xz = (RR_sq >= OUTER_CYL_INNER_R**2) & (RR_sq <= OUTER_CYL_OUTER_R**2)
     for ix in range(nx):
         for iz in range(nz):
-            r_sq = x_range[ix]**2 + z_range[iz]**2
-            if OUTER_CYL_INNER_R**2 <= r_sq <= OUTER_CYL_OUTER_R**2:
-                surf_y = col_top[ix, iz]
-                iy_top_cyl = min(ny, int((surf_y - y_range[0]) / res))
+            if outer_cyl_xz[ix, iz]:
+                iy_top_cyl = iy_top_map[ix, iz]
                 if iy_top_cyl > iy_base_top_cyl:
-                    for iy in range(iy_base_top_cyl, iy_top_cyl):
-                        grid[ix, iy, iz] = 1
-                        outer_cyl_mask[ix, iy, iz] = 1
-                        n_outer_cyl += 1
+                    grid[ix, iy_base_top_cyl:iy_top_cyl, iz] = 1
+                    outer_cyl_mask[ix, iy_base_top_cyl:iy_top_cyl, iz] = 1
+    n_outer_cyl = int(outer_cyl_mask.sum())
+    del RR_sq, XX, ZZ, inner_cyl_xz, outer_cyl_xz, iy_top_map
     print(f"  Outer cyl: R=[{OUTER_CYL_INNER_R:.0f}, {OUTER_CYL_OUTER_R:.0f}]mm, "
           f"{n_outer_cyl / 1e6:.1f}M voxels")
 
@@ -558,16 +557,27 @@ def main():
     print("\nPhase 6e: Wiring hole (30mm dia)...")
     n_wire = 0
     wire_base_y = y_min + BASE_THICKNESS
+    wire_center_y = wire_base_y + WIRE_HOLE_CENTER_HEIGHT
+    # Narrow Y search to the wire hole region
+    iy_wire_lo = max(0, int((wire_center_y - WIRE_HOLE_R - y_range[0]) / res) - 1)
+    iy_wire_hi = min(ny, int((wire_center_y + WIRE_HOLE_R - y_range[0]) / res) + 2)
+    # Narrow XZ to cylinder wall region at the wire hole angle
+    wire_cos = math.cos(WIRE_HOLE_ANGLE)
+    wire_sin = math.sin(WIRE_HOLE_ANGLE)
     for ix in range(nx):
         for iz in range(nz):
             r_sq = x_range[ix]**2 + z_range[iz]**2
-            # Only process voxels in the cylinder wall region
             if r_sq < INNER_CYL_INNER_R**2 or r_sq > OUTER_CYL_OUTER_R**2:
                 continue
-            for iy in range(ny):
+            # Quick angular check: only process near the wire hole angle
+            tangential = -x_range[ix] * wire_sin + z_range[iz] * wire_cos
+            if abs(tangential) > WIRE_HOLE_R + res:
+                continue
+            for iy in range(iy_wire_lo, iy_wire_hi):
                 y_val = y_range[iy]
-                if is_in_wire_hole(x_range[ix], z_range[iz], y_val,
-                                   wire_base_y):
+                vertical = y_val - wire_center_y
+                dist_sq = tangential * tangential + vertical * vertical
+                if dist_sq <= WIRE_HOLE_R * WIRE_HOLE_R:
                     if grid[ix, iy, iz] == 1:
                         grid[ix, iy, iz] = 0
                         inner_cyl_mask[ix, iy, iz] = 0
