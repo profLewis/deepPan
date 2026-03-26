@@ -1335,24 +1335,32 @@ def generate_notepad(note_index, obj_path, output_dir,
         tgt_centroid = target_pan_verts.mean(axis=0)
 
         if ring == 'outer':
-            # Outer ring: rotate around drum Y-axis by angular difference
-            # between source and target pad positions. This preserves the
-            # pad shape and bowl curvature exactly.
-            src_xz = np.array([src_centroid[0], src_centroid[2]])
-            tgt_xz = np.array([tgt_centroid[0], tgt_centroid[2]])
-            src_angle = math.atan2(src_xz[1], src_xz[0])
-            tgt_angle = math.atan2(tgt_xz[1], tgt_xz[0])
+            # Outer ring: rotate around drum Y-axis (through drum center)
+            # by angular difference between source and target pad positions.
+            # Pads sit on same bowl radius so this preserves curvature.
+            import json as _cj
+            _off_path = Path("data/pan_centroid_offset.json")
+            if _off_path.exists():
+                with open(_off_path) as _of:
+                    _drum_center = np.array(_cj.load(_of)["centroid_offset_mm"])
+            else:
+                _drum_center = np.zeros(3)
+            # Angular positions relative to drum center (XZ plane)
+            src_rel = src_centroid - _drum_center
+            tgt_rel = tgt_centroid - _drum_center
+            src_angle = math.atan2(src_rel[2], src_rel[0])
+            tgt_angle = math.atan2(tgt_rel[2], tgt_rel[0])
             rot_angle = tgt_angle - src_angle
             c_r, s_r = math.cos(rot_angle), math.sin(rot_angle)
-            # Rotation around Y axis
             R_y = np.array([[c_r, 0, s_r],
                             [0,   1, 0  ],
                             [-s_r, 0, c_r]])
-            pan_verts = (R_y @ src_pan_verts.T).T
-            grove_verts = (R_y @ src_grove_verts.T).T
+            # Rotate around drum center
+            pan_verts = (R_y @ (src_pan_verts - _drum_center).T).T + _drum_center
+            grove_verts = (R_y @ (src_grove_verts - _drum_center).T).T + _drum_center
             pan_faces = src_pan_faces
             grove_faces = src_grove_faces
-            print(f"  Outer clone: Y-axis rotation {math.degrees(rot_angle):.1f}°")
+            print(f"  Outer clone: Y-rotation {math.degrees(rot_angle):.1f}° around drum center")
         else:
             # Inner/central: use normal alignment + long-axis twist + bbox scale
             src_normal = compute_surface_normal(src_pan_verts, src_pan_faces)
