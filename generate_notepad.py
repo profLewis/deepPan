@@ -1301,6 +1301,26 @@ def compute_hole_positions(pan_verts, pan_faces, centroid, normal,
         else:
             break
 
+    # If we didn't get enough holes, retry with reduced separation
+    if len(selected) < count:
+        for reduced_sep in [6.0, 4.0]:
+            selected = [candidates[0]]
+            for _ in range(count - 1):
+                best_pt = None
+                best_min_dist = -1
+                for c in candidates:
+                    min_d = min(np.linalg.norm(c - s) for s in selected)
+                    if min_d >= reduced_sep and min_d > best_min_dist:
+                        best_min_dist = min_d
+                        best_pt = c
+                if best_pt is not None:
+                    selected.append(best_pt)
+                else:
+                    break
+            if len(selected) >= count:
+                print(f"  Found {count} holes with reduced separation ({reduced_sep}mm)")
+                break
+
     return selected
 
 
