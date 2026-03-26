@@ -1409,6 +1409,16 @@ def generate_notepad(note_index, obj_path, output_dir,
             pan_faces = src_pan_faces
             grove_faces = src_grove_faces
             print(f"  Outer clone: drum-axis rotation {math.degrees(rot_angle):.1f}°")
+            # Shave groove edges inward by a small tolerance for printing fit
+            GROOVE_CLONE_TOLERANCE = 0.3  # mm
+            if len(grove_verts) >= 3:
+                grove_centroid = grove_verts.mean(axis=0)
+                for gi in range(len(grove_verts)):
+                    to_center = grove_centroid - grove_verts[gi]
+                    dist = np.linalg.norm(to_center)
+                    if dist > 0.1:
+                        grove_verts[gi] += to_center / dist * GROOVE_CLONE_TOLERANCE
+                print(f"  Groove edges shaved {GROOVE_CLONE_TOLERANCE}mm inward for printing tolerance")
         else:
             # Inner/central: use normal alignment + long-axis twist + bbox scale
             src_normal = compute_surface_normal(src_pan_verts, src_pan_faces)
@@ -2297,11 +2307,12 @@ def main():
             # Generate all 29 note pads
             print("Generating all 29 note pads...")
             results = []
-            # Clone map: only pads with broken source geometry
+            # Clone map: all outer pads clone from O1 (rotate by 30° increments),
+            # I4 clones from I1 (broken source geometry)
             clone_map = {
-                'I4': 'I1',    # broken source geometry
-                'O3': 'O2',    # rotated clone (O3/O9 have internal geometry issues)
-                'O9': 'O8',
+                'I4': 'I1',
+                'O0': 'O1', 'O2': 'O1', 'O3': 'O1', 'O4': 'O1', 'O5': 'O1',
+                'O6': 'O1', 'O7': 'O1', 'O8': 'O1', 'O9': 'O1', 'O10': 'O1', 'O11': 'O1',
             }
 
             for note_index in sorted(NOTE_BY_INDEX.keys()):
