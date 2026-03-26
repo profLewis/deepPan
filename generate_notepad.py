@@ -1670,8 +1670,8 @@ def generate_notepad(note_index, obj_path, output_dir,
         # the pad, reject any too close to the edge or the hardware zone,
         # then greedily pick well-separated positions.
         if ring == 'inner':
-            MIN_EDGE_DIST = 2.0   # mm from flange boundary
-            MIN_HW_DIST = 2.0     # mm from nearest hardware edge
+            MIN_EDGE_DIST = 1.5   # mm from flange boundary (was 2.0)
+            MIN_HW_DIST = 1.5     # mm from nearest hardware edge (was 2.0)
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 2         # 2 screws for inner pads
         else:
