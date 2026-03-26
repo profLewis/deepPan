@@ -1323,8 +1323,7 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"  Grove: {len(grove_verts)} vertices, {len(grove_faces)} faces")
 
     if clone_from is not None and clone_from in NOTE_BY_INDEX:
-        # Clone geometry from source pad, transform to match target's
-        # position, orientation, and size exactly.
+        # Clone geometry from source pad, transform to match target position.
         src_info = NOTE_BY_INDEX[clone_from]
         src_pan_verts, src_pan_faces = extract_object_mesh(
             objects, src_info['pan_object'], all_vertices)
@@ -1332,84 +1331,89 @@ def generate_notepad(note_index, obj_path, output_dir,
             objects, src_info['grove_object'], all_vertices)
         print(f"  ** CLONING from {clone_from} ({len(src_pan_verts)} verts)")
 
-        src_normal = compute_surface_normal(src_pan_verts, src_pan_faces)
         src_centroid = src_pan_verts.mean(axis=0)
-        tgt_normal = compute_surface_normal(target_pan_verts, pan_faces)
         tgt_centroid = target_pan_verts.mean(axis=0)
 
-        # Target bounding box (what the clone must match)
-        tgt_bbox = target_pan_verts.max(axis=0) - target_pan_verts.min(axis=0)
-        src_bbox = src_pan_verts.max(axis=0) - src_pan_verts.min(axis=0)
+        if ring == 'outer':
+            # Outer ring: rotate around drum Y-axis by angular difference
+            # between source and target pad positions. This preserves the
+            # pad shape and bowl curvature exactly.
+            src_xz = np.array([src_centroid[0], src_centroid[2]])
+            tgt_xz = np.array([tgt_centroid[0], tgt_centroid[2]])
+            src_angle = math.atan2(src_xz[1], src_xz[0])
+            tgt_angle = math.atan2(tgt_xz[1], tgt_xz[0])
+            rot_angle = tgt_angle - src_angle
+            c_r, s_r = math.cos(rot_angle), math.sin(rot_angle)
+            # Rotation around Y axis
+            R_y = np.array([[c_r, 0, s_r],
+                            [0,   1, 0  ],
+                            [-s_r, 0, c_r]])
+            pan_verts = (R_y @ src_pan_verts.T).T
+            grove_verts = (R_y @ src_grove_verts.T).T
+            pan_faces = src_pan_faces
+            grove_faces = src_grove_faces
+            print(f"  Outer clone: Y-axis rotation {math.degrees(rot_angle):.1f}°")
+        else:
+            # Inner/central: use normal alignment + long-axis twist + bbox scale
+            src_normal = compute_surface_normal(src_pan_verts, src_pan_faces)
+            tgt_normal = compute_surface_normal(target_pan_verts, pan_faces)
+            tgt_bbox = target_pan_verts.max(axis=0) - target_pan_verts.min(axis=0)
 
-        def rotation_between(a, b):
-            a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
-            v = np.cross(a, b)
-            c = np.dot(a, b)
-            if np.linalg.norm(v) < 1e-10:
-                return np.eye(3) if c > 0 else np.diag([1, -1, -1])
-            s = np.linalg.norm(v)
-            kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-            return np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (s * s))
+            def rotation_between(a, b):
+                a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+                v = np.cross(a, b)
+                c = np.dot(a, b)
+                if np.linalg.norm(v) < 1e-10:
+                    return np.eye(3) if c > 0 else np.diag([1, -1, -1])
+                s = np.linalg.norm(v)
+                kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+                return np.eye(3) + kmat + kmat @ kmat * ((1 - c) / (s * s))
 
-        # Step 1: Align source normal to target normal
-        R_normal = rotation_between(src_normal, tgt_normal)
+            R_normal = rotation_between(src_normal, tgt_normal)
 
-        # Step 2: Compute long axes and add rotation about the target normal
-        # to align the source long axis with the target long axis.
-        def compute_long_axis(verts, normal, centroid):
-            n = normal / np.linalg.norm(normal)
-            if abs(n[0]) < 0.9: xl = np.cross(n, [1,0,0])
-            else: xl = np.cross(n, [0,1,0])
-            xl /= np.linalg.norm(xl)
-            yl = np.cross(n, xl)
-            rel = verts - centroid
-            lx, ly = rel @ xl, rel @ yl
-            cov = np.cov(np.column_stack([lx, ly]).T)
-            vals, vecs = np.linalg.eigh(cov)
-            long_2d = vecs[:, np.argmax(vals)]
-            return long_2d[0] * xl + long_2d[1] * yl
+            def compute_long_axis(verts, normal, centroid):
+                n = normal / np.linalg.norm(normal)
+                if abs(n[0]) < 0.9: xl = np.cross(n, [1,0,0])
+                else: xl = np.cross(n, [0,1,0])
+                xl /= np.linalg.norm(xl)
+                yl = np.cross(n, xl)
+                rel = verts - centroid
+                lx, ly = rel @ xl, rel @ yl
+                cov = np.cov(np.column_stack([lx, ly]).T)
+                vals, vecs = np.linalg.eigh(cov)
+                long_2d = vecs[:, np.argmax(vals)]
+                return long_2d[0] * xl + long_2d[1] * yl
 
-        src_long = compute_long_axis(src_pan_verts, src_normal, src_centroid)
-        tgt_long = compute_long_axis(target_pan_verts, tgt_normal, tgt_centroid)
+            src_long = compute_long_axis(src_pan_verts, src_normal, src_centroid)
+            tgt_long = compute_long_axis(target_pan_verts, tgt_normal, tgt_centroid)
+            src_long_rotated = R_normal @ src_long
+            tgt_n = tgt_normal / np.linalg.norm(tgt_normal)
+            src_proj = src_long_rotated - np.dot(src_long_rotated, tgt_n) * tgt_n
+            tgt_proj = tgt_long - np.dot(tgt_long, tgt_n) * tgt_n
+            src_proj /= np.linalg.norm(src_proj)
+            tgt_proj /= np.linalg.norm(tgt_proj)
+            cos_a = np.clip(np.dot(src_proj, tgt_proj), -1, 1)
+            sin_a = np.dot(np.cross(src_proj, tgt_proj), tgt_n)
+            angle = math.atan2(sin_a, cos_a)
+            c_a, s_a = math.cos(angle), math.sin(angle)
+            kmat = np.array([[0, -tgt_n[2], tgt_n[1]],
+                             [tgt_n[2], 0, -tgt_n[0]],
+                             [-tgt_n[1], tgt_n[0], 0]])
+            R_twist = np.eye(3) + kmat * s_a + kmat @ kmat * (1 - c_a)
+            R = R_twist @ R_normal
 
-        # Rotate source long axis through R_normal, then find residual
-        # rotation about target normal to align with target long axis
-        src_long_rotated = R_normal @ src_long
-        # Project both onto target tangent plane
-        tgt_n = tgt_normal / np.linalg.norm(tgt_normal)
-        src_proj = src_long_rotated - np.dot(src_long_rotated, tgt_n) * tgt_n
-        tgt_proj = tgt_long - np.dot(tgt_long, tgt_n) * tgt_n
-        src_proj /= np.linalg.norm(src_proj)
-        tgt_proj /= np.linalg.norm(tgt_proj)
-
-        cos_a = np.clip(np.dot(src_proj, tgt_proj), -1, 1)
-        sin_a = np.dot(np.cross(src_proj, tgt_proj), tgt_n)
-        angle = math.atan2(sin_a, cos_a)
-
-        # Rodrigues rotation about tgt_n by angle
-        c_a, s_a = math.cos(angle), math.sin(angle)
-        kmat = np.array([[0, -tgt_n[2], tgt_n[1]],
-                         [tgt_n[2], 0, -tgt_n[0]],
-                         [-tgt_n[1], tgt_n[0], 0]])
-        R_twist = np.eye(3) + kmat * s_a + kmat @ kmat * (1 - c_a)
-
-        R = R_twist @ R_normal
-
-        # Center, rotate, then scale to match target bbox
-        rotated_pan = (R @ (src_pan_verts - src_centroid).T).T
-        rotated_grove = (R @ (src_grove_verts - src_centroid).T).T
-
-        rot_bbox = rotated_pan.max(axis=0) - rotated_pan.min(axis=0)
-        scale = np.ones(3)
-        for ax in range(3):
-            if rot_bbox[ax] > 1e-6:
-                scale[ax] = tgt_bbox[ax] / rot_bbox[ax]
-
-        pan_verts = rotated_pan * scale + tgt_centroid
-        pan_faces = src_pan_faces
-        grove_verts = rotated_grove * scale + tgt_centroid
-        grove_faces = src_grove_faces
-        print(f"  Cloned, aligned (twist {math.degrees(angle):.1f}°), scaled ({scale[0]:.3f}, {scale[1]:.3f}, {scale[2]:.3f})")
+            rotated_pan = (R @ (src_pan_verts - src_centroid).T).T
+            rotated_grove = (R @ (src_grove_verts - src_centroid).T).T
+            rot_bbox = rotated_pan.max(axis=0) - rotated_pan.min(axis=0)
+            scale = np.ones(3)
+            for ax in range(3):
+                if rot_bbox[ax] > 1e-6:
+                    scale[ax] = tgt_bbox[ax] / rot_bbox[ax]
+            pan_verts = rotated_pan * scale + tgt_centroid
+            pan_faces = src_pan_faces
+            grove_verts = rotated_grove * scale + tgt_centroid
+            grove_faces = src_grove_faces
+            print(f"  Cloned, aligned (twist {math.degrees(angle):.1f}°), scaled ({scale[0]:.3f}, {scale[1]:.3f}, {scale[2]:.3f})")
     else:
         pan_verts = target_pan_verts
 
@@ -1459,6 +1463,31 @@ def generate_notepad(note_index, obj_path, output_dir,
     else:
         scale_factor = 1.0
         was_scaled = False
+
+    # Nudge specific pads to fix overlaps (rotate around inner ring centroid)
+    # I0 overlaps I4 — rotate I0 toward I1 by a small angle
+    INNER_PAD_NUDGES = {
+        'I0': -5.0,  # degrees — negative = toward I1 (clockwise in XZ)
+    }
+    if note_index in INNER_PAD_NUDGES and ring == 'inner':
+        _nudge_deg = INNER_PAD_NUDGES[note_index]
+        _nudge_rad = math.radians(_nudge_deg)
+        # Compute inner ring centroid from all inner pad positions
+        _inner_centers = []
+        for _iidx in ['I0', 'I1', 'I2', 'I3', 'I4']:
+            if _iidx in NOTE_BY_INDEX:
+                _ipv, _ipf = extract_object_mesh(objects, NOTE_BY_INDEX[_iidx]['pan_object'], all_vertices)
+                _inner_centers.append(_ipv.mean(axis=0))
+        _ring_center = np.mean(_inner_centers, axis=0)
+        # Rotate pad + groove around ring center in XZ plane
+        _c, _s = math.cos(_nudge_rad), math.sin(_nudge_rad)
+        for _verts in [pan_verts, grove_verts]:
+            _rel = _verts - _ring_center
+            _new_x = _rel[:, 0] * _c - _rel[:, 2] * _s
+            _new_z = _rel[:, 0] * _s + _rel[:, 2] * _c
+            _verts[:, 0] = _ring_center[0] + _new_x
+            _verts[:, 2] = _ring_center[2] + _new_z
+        print(f"  ** Nudged {note_index} by {_nudge_deg:.1f}° around inner ring center")
 
     # Compute surface normal from pan (the playing surface defines the orientation)
     pan_normal = compute_surface_normal(pan_verts, pan_faces)
