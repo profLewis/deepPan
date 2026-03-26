@@ -5,6 +5,7 @@ Generate alignment/test pins that fit through screw holes.
 Each pin mimics an M2 flat-head screw (DIN 965):
   - Tapered cone head: 3.8mm top → 2.0mm bottom, 1.0mm tall, 90° included angle
   - Cylindrical shaft: 2.0mm diameter, extends down through the hole
+  - Small radial needle hole (0.8mm) near top of plug for extraction
 
 Pins are positioned at each screw hole from notepad_properties.json,
 oriented along the pad's surface normal.  Output in body coords
@@ -34,6 +35,11 @@ PLUG_HEIGHT = 2.0      # mm — cylindrical plug above taper (fits bore recess)
 SHAFT_R = 1.0          # mm — shaft radius (2.0mm dia, M2)
 SHAFT_LENGTH = 13.1    # mm — shaft below taper (total = plug + taper + shaft = 16mm)
 SEGMENTS = 24          # angular resolution
+
+# Needle extraction hole — small radial through-hole near top of plug
+NEEDLE_HOLE_R = 0.4    # mm (0.8mm diameter, needle-thickness)
+NEEDLE_HOLE_Z = -0.5   # mm below top (midway in first 1mm of plug)
+NEEDLE_HOLE_SEGS = 8   # angular resolution for small hole
 
 
 def generate_pin_mesh():
@@ -105,7 +111,35 @@ def generate_pin_mesh():
         # Bottom cap fan (reversed)
         faces.append([bot_center, r3_start + j, r3_start + i])
 
-    return np.array(verts, dtype=float), faces
+    pin_verts = np.array(verts, dtype=float)
+
+    # --- Needle extraction hole ---
+    # Small radial through-hole at the rim of the plug so a needle/wire
+    # can hook the pin for removal.  Uses trimesh boolean subtraction.
+    try:
+        import trimesh
+        pin_mesh = trimesh.Trimesh(vertices=pin_verts, faces=faces, process=True)
+        trimesh.repair.fix_normals(pin_mesh)
+
+        # Create a small horizontal cylinder along +X axis through plug wall
+        hole_cyl = trimesh.creation.cylinder(
+            radius=NEEDLE_HOLE_R,
+            height=HEAD_TOP_R * 3,  # long enough to go through
+            sections=NEEDLE_HOLE_SEGS,
+        )
+        # Rotate so cylinder axis is along X (default is Z)
+        R90 = trimesh.transformations.rotation_matrix(math.pi / 2, [0, 1, 0])
+        hole_cyl.apply_transform(R90)
+        # Translate to plug level
+        T = np.eye(4)
+        T[2, 3] = NEEDLE_HOLE_Z
+        hole_cyl.apply_transform(T)
+
+        pin_mesh = pin_mesh.difference(hole_cyl, engine='manifold')
+        return np.array(pin_mesh.vertices), [list(f) for f in pin_mesh.faces]
+    except Exception as e:
+        print(f"  WARNING: needle hole boolean failed ({e}), using solid pin")
+        return pin_verts, faces
 
 
 def transform_pin(pin_verts, position, normal):
