@@ -1407,8 +1407,12 @@ def generate_notepad(note_index, obj_path, output_dir,
     z_extent = pan_verts[:, 2].max() - pan_verts[:, 2].min()
     min_extent = min(x_extent, z_extent)
 
+    MAX_INNER_SCALE = 1.15  # cap inner pad scaling to avoid overlap
     if min_extent < min_pad_size:
         scale_factor = min_pad_size / min_extent
+        if ring == 'inner' and scale_factor > MAX_INNER_SCALE:
+            print(f"  ** Capping inner pad scale from {scale_factor:.3f}x to {MAX_INNER_SCALE}x")
+            scale_factor = MAX_INNER_SCALE
         was_scaled = True
         if ring == 'inner':
             # Uniform 3D scale from centroid to preserve curvature
