@@ -1567,11 +1567,21 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"Thickening pan surface (down: {pan_thickness}mm)...")
     _groove_attached = False
     if ring == 'inner':
-        # Inner pads: DON'T thicken pad separately. The pad + groove will
-        # be combined into one surface and extruded together (see below).
-        pan_solid_verts = pan_verts.copy()  # just surface, no thickness yet
-        pan_solid_faces = [list(f) for f in pan_faces]
-        print(f"  Pan surface: {len(pan_solid_verts)} verts (will combine with groove)")
+        # Inner pads: thicken the pad, then attach groove if available.
+        pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
+                                                            thickness_down=pan_thickness,
+                                                            thickness_up=0)
+        print(f"  Pan solid: {len(pan_solid_verts)} vertices, {len(pan_solid_faces)} faces")
+        # Attach groove to inner pad (same as central/outer)
+        if len(grove_verts) >= 3 and len(grove_faces) >= 1:
+            grove_solid_v, grove_solid_f = thicken_surface(grove_verts, grove_faces,
+                                                            thickness_down=pan_thickness,
+                                                            thickness_up=0)
+            n_pad_v = len(pan_solid_verts)
+            pan_solid_verts = np.vstack([pan_solid_verts, grove_solid_v])
+            pan_solid_faces += [[vi + n_pad_v for vi in f] for f in grove_solid_f]
+            _groove_attached = True
+            print(f"  + Groove attached: {len(grove_solid_v)}v, combined {len(pan_solid_verts)}v")
     elif ring == 'central':
         # Central pads: thicken pad, then also thicken groove and combine.
         # This extends the pad footprint into groove area so screw holes
@@ -1592,10 +1602,21 @@ def generate_notepad(note_index, obj_path, output_dir,
             _groove_attached = True
             print(f"  + Groove attached: {len(grove_solid_v)}v, combined {len(pan_solid_verts)}v")
     else:
+        # Outer ring: thicken pad, then attach groove (same approach as central)
         pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
                                                             thickness_down=pan_thickness,
                                                             thickness_up=0)
         print(f"  Pan solid: {len(pan_solid_verts)} vertices, {len(pan_solid_faces)} faces")
+        # Attach groove to outer pad
+        if len(grove_verts) >= 3 and len(grove_faces) >= 1:
+            grove_solid_v, grove_solid_f = thicken_surface(grove_verts, grove_faces,
+                                                            thickness_down=pan_thickness,
+                                                            thickness_up=0)
+            n_pad_v = len(pan_solid_verts)
+            pan_solid_verts = np.vstack([pan_solid_verts, grove_solid_v])
+            pan_solid_faces += [[vi + n_pad_v for vi in f] for f in grove_solid_f]
+            _groove_attached = True
+            print(f"  + Groove attached: {len(grove_solid_v)}v, combined {len(pan_solid_verts)}v")
     print(f"  Pan boundary loops: {len(find_all_boundary_loops(find_boundary_edges(pan_faces)))}")
 
     # Compute interior centroid for pan (must lie within the solid volume)
