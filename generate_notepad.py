@@ -1448,12 +1448,32 @@ def generate_notepad(note_index, obj_path, output_dir,
 
     # Thicken pan surface (downward only)
     print(f"Thickening pan surface (down: {pan_thickness}mm)...")
+    _groove_attached = False
     if ring == 'inner':
         # Inner pads: DON'T thicken pad separately. The pad + groove will
         # be combined into one surface and extruded together (see below).
         pan_solid_verts = pan_verts.copy()  # just surface, no thickness yet
         pan_solid_faces = [list(f) for f in pan_faces]
         print(f"  Pan surface: {len(pan_solid_verts)} verts (will combine with groove)")
+    elif ring == 'central':
+        # Central pads: thicken pad, then also thicken groove and combine.
+        # This extends the pad footprint into groove area so screw holes
+        # have material underneath them.
+        pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
+                                                            thickness_down=pan_thickness,
+                                                            thickness_up=0)
+        print(f"  Pan solid: {len(pan_solid_verts)} vertices, {len(pan_solid_faces)} faces")
+        # Attach groove to central pad
+        if len(grove_verts) >= 3 and len(grove_faces) >= 1:
+            grove_solid_v, grove_solid_f = thicken_surface(grove_verts, grove_faces,
+                                                            thickness_down=pan_thickness,
+                                                            thickness_up=0)
+            # Combine: offset groove face indices by pad vertex count
+            n_pad_v = len(pan_solid_verts)
+            pan_solid_verts = np.vstack([pan_solid_verts, grove_solid_v])
+            pan_solid_faces += [[vi + n_pad_v for vi in f] for f in grove_solid_f]
+            _groove_attached = True
+            print(f"  + Groove attached: {len(grove_solid_v)}v, combined {len(pan_solid_verts)}v")
     else:
         pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
                                                             thickness_down=pan_thickness,
@@ -1482,6 +1502,40 @@ def generate_notepad(note_index, obj_path, output_dir,
         pan_interior_centroid = pan_surface_centroid - pan_normal * (pan_thickness / 2.0)
 
     print(f"  Mount position: ({pan_surface_centroid[0]:.2f}, {pan_surface_centroid[1]:.2f}, {pan_surface_centroid[2]:.2f})")
+
+    # Safety check: if boss is too close to pad boundary, shift it inward.
+    # The boss outer radius must fit within the pad boundary with margin.
+    if ring in ('inner', 'central'):
+        boss_outer_r = mount_inner_dia / 2 + mount_wall
+        BOSS_MARGIN = 1.0  # mm clearance between boss and pad edge
+        be_check = find_boundary_edges(pan_faces)
+        loops_check = find_all_boundary_loops(be_check)
+        if loops_check:
+            bvi_check = max(loops_check, key=len)
+            bpts_check = pan_verts[bvi_check]
+            # Project to tangent plane for distance check
+            n_hat_c = pan_normal / np.linalg.norm(pan_normal)
+            dists_to_boss = []
+            for bp in bpts_check:
+                diff_b = bp - pan_surface_centroid
+                diff_b = diff_b - np.dot(diff_b, n_hat_c) * n_hat_c  # tangent plane
+                dists_to_boss.append(np.linalg.norm(diff_b))
+            min_dist = min(dists_to_boss)
+            needed = boss_outer_r + BOSS_MARGIN
+            if min_dist < needed:
+                # Find the direction of the nearest boundary point
+                nearest_idx = int(np.argmin(dists_to_boss))
+                nearest_pt = bpts_check[nearest_idx]
+                to_nearest = nearest_pt - pan_surface_centroid
+                to_nearest = to_nearest - np.dot(to_nearest, n_hat_c) * n_hat_c
+                to_nearest_len = np.linalg.norm(to_nearest)
+                if to_nearest_len > 1e-6:
+                    # Shift boss AWAY from nearest boundary
+                    shift_dist = needed - min_dist
+                    shift_dir = -to_nearest / to_nearest_len
+                    pan_surface_centroid = pan_surface_centroid + shift_dir * shift_dist
+                    pan_interior_centroid = pan_surface_centroid - pan_normal * (pan_thickness / 2.0)
+                    print(f"  ** Boss shifted {shift_dist:.1f}mm inward (was {min_dist:.1f}mm from edge, need {needed:.1f}mm)")
 
     # For inner ring pads, extend the pad surface outward by adding a
     # contiguous flange ring around the boundary.  This creates a single
@@ -1693,9 +1747,21 @@ def generate_notepad(note_index, obj_path, output_dir,
 
         # Get boundary in 2D tangent plane
         # For inner pads with flange, use the extended ring as the boundary
+        # For central pads with groove attached, use the groove outer boundary
         if ring == 'inner' and '_inner_extended_ring' in dir() and _inner_extended_ring is not None:
             bpts = _inner_extended_ring
             _have_boundary = True
+        elif ring == 'central' and _groove_attached:
+            # Use pad boundary but with relaxed edge distance — groove provides
+            # extra material beyond the pad edge for screw hole support
+            be = find_boundary_edges(pan_faces)
+            loops = find_all_boundary_loops(be)
+            _have_boundary = bool(loops)
+            if _have_boundary:
+                bvi = max(loops, key=len)
+                bpts = pan_verts[bvi]
+                MIN_EDGE_DIST = 2.0   # relaxed from 3.0 — groove extends beyond pad
+                print(f"  Using pad boundary with relaxed edge dist ({MIN_EDGE_DIST}mm, groove attached)")
         else:
             be = find_boundary_edges(pan_faces)
             loops = find_all_boundary_loops(be)
