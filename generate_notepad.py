@@ -1335,9 +1335,9 @@ def generate_notepad(note_index, obj_path, output_dir,
         tgt_centroid = target_pan_verts.mean(axis=0)
 
         if ring == 'outer':
-            # Outer ring: rotate around drum Y-axis (through drum center)
-            # by angular difference between source and target pad positions.
-            # Pads sit on same bowl radius so this preserves curvature.
+            # Outer ring: rotate around the drum axis through drum center.
+            # The drum axis in source coords is found via R_level (which
+            # rotates the drum axis to +Y). So drum_axis = R_level^T @ [0,1,0].
             import json as _cj
             _off_path = Path("data/pan_centroid_offset.json")
             if _off_path.exists():
@@ -1345,22 +1345,35 @@ def generate_notepad(note_index, obj_path, output_dir,
                     _drum_center = np.array(_cj.load(_of)["centroid_offset_mm"])
             else:
                 _drum_center = np.zeros(3)
-            # Angular positions relative to drum center (XZ plane)
+            _R_level = compute_leveling_rotation(obj_path)
+            drum_axis = _R_level.T @ np.array([0, 1, 0])  # drum axis in source coords
+            drum_axis /= np.linalg.norm(drum_axis)
+
+            # Project source/target centroids to plane perpendicular to drum axis
             src_rel = src_centroid - _drum_center
             tgt_rel = tgt_centroid - _drum_center
-            src_angle = math.atan2(src_rel[2], src_rel[0])
-            tgt_angle = math.atan2(tgt_rel[2], tgt_rel[0])
-            rot_angle = tgt_angle - src_angle
+            # Remove drum-axis component
+            src_flat = src_rel - np.dot(src_rel, drum_axis) * drum_axis
+            tgt_flat = tgt_rel - np.dot(tgt_rel, drum_axis) * drum_axis
+            # Angle between them around drum axis
+            src_flat_n = src_flat / np.linalg.norm(src_flat)
+            tgt_flat_n = tgt_flat / np.linalg.norm(tgt_flat)
+            cos_a = np.clip(np.dot(src_flat_n, tgt_flat_n), -1, 1)
+            sin_a = np.dot(np.cross(src_flat_n, tgt_flat_n), drum_axis)
+            rot_angle = math.atan2(sin_a, cos_a)
+
+            # Rodrigues rotation around drum_axis
             c_r, s_r = math.cos(rot_angle), math.sin(rot_angle)
-            R_y = np.array([[c_r, 0, s_r],
-                            [0,   1, 0  ],
-                            [-s_r, 0, c_r]])
-            # Rotate around drum center
-            pan_verts = (R_y @ (src_pan_verts - _drum_center).T).T + _drum_center
-            grove_verts = (R_y @ (src_grove_verts - _drum_center).T).T + _drum_center
+            K = np.array([[0, -drum_axis[2], drum_axis[1]],
+                          [drum_axis[2], 0, -drum_axis[0]],
+                          [-drum_axis[1], drum_axis[0], 0]])
+            R_drum = np.eye(3) + K * s_r + K @ K * (1 - c_r)
+
+            pan_verts = (R_drum @ (src_pan_verts - _drum_center).T).T + _drum_center
+            grove_verts = (R_drum @ (src_grove_verts - _drum_center).T).T + _drum_center
             pan_faces = src_pan_faces
             grove_faces = src_grove_faces
-            print(f"  Outer clone: Y-rotation {math.degrees(rot_angle):.1f}° around drum center")
+            print(f"  Outer clone: drum-axis rotation {math.degrees(rot_angle):.1f}°")
         else:
             # Inner/central: use normal alignment + long-axis twist + bbox scale
             src_normal = compute_surface_normal(src_pan_verts, src_pan_faces)
