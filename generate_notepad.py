@@ -1534,9 +1534,9 @@ def generate_notepad(note_index, obj_path, output_dir,
                     outward = outward / ol if ol > 1e-8 else np.array([1, 0, 0])
 
                 radial_dist = np.linalg.norm(pt - boundary_centroid)
-                # Use percentage-based OR minimum 7mm absolute extension,
-                # whichever is larger — ensures room for boss + screw holes
-                extension = max(radial_dist * (groove_spread - 1.0), 7.0)
+                # Use percentage-based OR minimum 4mm absolute extension,
+                # whichever is larger — keeps flange compact to avoid overlap
+                extension = max(radial_dist * (groove_spread - 1.0), 4.0)
                 ext_pt = pt + outward * extension
                 extended_pts.append(ext_pt)
 

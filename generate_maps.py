@@ -131,24 +131,25 @@ def main():
         if not p:
             continue
 
-        # Extract pad + groove geometry
+        # Pad boundary from assembly_view (actual solid footprint, not just surface)
+        pad_key = f'Pad_{idx}'
+        if pad_key not in a_objects:
+            continue
+        pv_body = a_verts[sorted(a_objects[pad_key])]
+        pad_xz_body = pv_body[:, [0, 2]]
+        try:
+            pad_hull = ConvexHull(pad_xz_body)
+            hull_pts = pad_xz_body[pad_hull.vertices]
+            bx = np.append(hull_pts[:, 0], hull_pts[0, 0])
+            bz = np.append(hull_pts[:, 1], hull_pts[0, 1])
+        except Exception:
+            continue
+
+        # Groove boundary in body XZ (from source OBJ)
         min_size = MIN_PAD_SIZE if ring == 'outer' else CENTRAL_MIN_PAD_SIZE
         pv, pf = extract_object_mesh(objects, info['pan_object'], all_vertices)
         gv, gf = extract_object_mesh(objects, info['grove_object'], all_vertices)
         pv, gv, _, _ = check_and_scale_pad(pv, gv, min_size=min_size)
-
-        # Pad boundary in body XZ
-        be = find_boundary_edges(pf)
-        loops = find_all_boundary_loops(be)
-        if not loops:
-            continue
-        bvi = max(loops, key=len)
-        bpts = pv[bvi]
-        bx, bz = project_to_xz(bpts, R_level, pan_offset)
-        bx = np.append(bx, bx[0])
-        bz = np.append(bz, bz[0])
-
-        # Groove boundary in body XZ
         gbe = find_boundary_edges(gf)
         gloops = find_all_boundary_loops(gbe)
         grove_bx, grove_bz = None, None
