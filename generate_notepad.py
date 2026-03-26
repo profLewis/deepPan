@@ -11,6 +11,23 @@ from pathlib import Path
 import math
 import trimesh
 
+# Source data URL — downloaded on demand if not present locally
+SOURCE_OBJ_URL = "https://github.com/profLewis/deepPan/raw/main/data/Tenor%20Pan%20only.obj"
+SOURCE_OBJ_PATH = "data/Tenor Pan only.obj"
+
+
+def ensure_source_obj(path=SOURCE_OBJ_PATH):
+    """Download the source OBJ if it doesn't exist locally."""
+    if Path(path).exists():
+        return path
+    print(f"Source OBJ not found locally. Downloading from GitHub...")
+    import urllib.request
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(SOURCE_OBJ_URL, path)
+    print(f"  Downloaded: {path} ({Path(path).stat().st_size / 1e6:.1f} MB)")
+    return path
+
+
 # Conversion factor: OBJ file is in cm, output in mm
 CM_TO_MM = 10.0
 
@@ -1993,7 +2010,7 @@ def save_notepad_properties(results, output_path):
 
 def main():
     import sys
-    obj_path = "data/Tenor Pan only.obj"
+    obj_path = ensure_source_obj()
     output_dir = "data/notepads"
 
     # Parse --spread=N option (groove spread for central ring pads)
@@ -2014,12 +2031,8 @@ def main():
             # Generate all 29 note pads
             print("Generating all 29 note pads...")
             results = []
-            # Clone map: outer pads are all clones of O0 (rotated into position),
-            # I4 cloned from I1 (broken source geometry)
+            # Clone map: only pads with broken source geometry
             clone_map = {'I4': 'I1'}
-            # All outer pads except O0 are clones of O0
-            for oi in range(1, 12):
-                clone_map[f'O{oi}'] = 'O0'
 
             for note_index in sorted(NOTE_BY_INDEX.keys()):
                 clone_src = clone_map.get(note_index)
