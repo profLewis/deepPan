@@ -675,55 +675,73 @@ def find_boundary_edges(faces):
 
 
 def find_all_boundary_loops(edges_with_order):
-    """Find all boundary loops (handles multiple disconnected boundaries)."""
+    """Find all boundary loops using directed edge traversal.
+
+    Uses the face-winding-consistent directed edges from find_boundary_edges()
+    to guarantee correct loop ordering and consistent winding for side walls.
+    """
     if not edges_with_order:
         return []
 
-    # Build adjacency from directed edges
-    adj = {}
+    # Build directed next-vertex map from face winding.
+    # For boundary edges (appearing in exactly 1 face), the directed edge
+    # (v1->v2) as stored by find_boundary_edges gives the correct winding.
+    directed_next = {}
     for edge, (v1, v2) in edges_with_order:
-        if v1 not in adj:
-            adj[v1] = []
-        adj[v1].append(v2)
-        if v2 not in adj:
-            adj[v2] = []
-        adj[v2].append(v1)
+        directed_next[v1] = v2
 
     all_loops = []
-    visited_vertices = set()
+    visited = set()
 
-    # Find all connected boundary loops
-    all_boundary_verts = set(adj.keys())
-
-    while all_boundary_verts - visited_vertices:
-        # Start a new loop from an unvisited boundary vertex
-        start = next(iter(all_boundary_verts - visited_vertices))
+    for start in directed_next:
+        if start in visited:
+            continue
         loop = [start]
-        visited_vertices.add(start)
-        current = start
-
-        while True:
-            neighbors = adj.get(current, [])
-            next_vertex = None
-            for n in neighbors:
-                if n not in visited_vertices:
-                    next_vertex = n
-                    break
-
-            if next_vertex is None:
-                # Check if we can close the loop
-                if start in neighbors and len(loop) > 2:
-                    pass  # Loop is closed
-                break
-
-            loop.append(next_vertex)
-            visited_vertices.add(next_vertex)
-            current = next_vertex
-
-        if len(loop) >= 3:
+        visited.add(start)
+        current = directed_next.get(start)
+        while current is not None and current != start and current not in visited:
+            loop.append(current)
+            visited.add(current)
+            current = directed_next.get(current)
+        if len(loop) >= 3 and current == start:
+            all_loops.append(loop)
+        elif len(loop) >= 3:
+            # Open chain (non-manifold topology) — still useful, mark visited
             all_loops.append(loop)
 
     return all_loops
+
+
+def validate_manifold(vertices, faces, label="mesh"):
+    """Check mesh for non-manifold edges and report issues.
+
+    Returns (is_ok, report_dict) where is_ok is True if the mesh has no
+    non-manifold edges (edges shared by 3+ faces).
+    """
+    edge_count = {}
+    for face in faces:
+        n = len(face)
+        for i in range(n):
+            v1, v2 = face[i], face[(i + 1) % n]
+            edge = tuple(sorted([v1, v2]))
+            edge_count[edge] = edge_count.get(edge, 0) + 1
+
+    non_manifold = {e: c for e, c in edge_count.items() if c > 2}
+    boundary = {e: c for e, c in edge_count.items() if c == 1}
+    interior = {e: c for e, c in edge_count.items() if c == 2}
+
+    is_ok = len(non_manifold) == 0
+    report = {
+        'total_edges': len(edge_count),
+        'interior_edges': len(interior),
+        'boundary_edges': len(boundary),
+        'non_manifold_edges': len(non_manifold),
+    }
+
+    if not is_ok:
+        print(f"  WARNING [{label}]: {len(non_manifold)} non-manifold edges "
+              f"(shared by 3+ faces)")
+    return is_ok, report
 
 
 def thicken_surface(vertices, faces, thickness_down, thickness_up=0):
@@ -760,7 +778,13 @@ def thicken_surface(vertices, faces, thickness_down, thickness_up=0):
     # Bottom faces (offset indices, reverse winding for correct normals)
     bottom_faces = [[idx + n_verts for idx in reversed(face)] for face in faces]
 
-    # Find all boundary loops and create side walls
+    # Find all boundary loops and create side walls.
+    # The directed traversal in find_all_boundary_loops guarantees that the
+    # loop winds consistently with the top-face winding.  For outward-facing
+    # side walls we need quads whose normal points away from the mesh interior.
+    # With CCW top faces, the boundary loop traverses v1->v2 such that the
+    # interior is on the LEFT.  The correct side quad is then:
+    #   [v2, v1, v1+n_verts, v2+n_verts]  (outward-facing)
     boundary_edges = find_boundary_edges(faces)
     boundary_loops = find_all_boundary_loops(boundary_edges)
 
@@ -769,10 +793,13 @@ def thicken_surface(vertices, faces, thickness_down, thickness_up=0):
         for i in range(len(loop)):
             v1 = loop[i]
             v2 = loop[(i + 1) % len(loop)]
-            # Create quad: top_v1, top_v2, bottom_v2, bottom_v1
-            side_faces.append([v1, v2, v2 + n_verts, v1 + n_verts])
+            # Side quad: reversed order so normal faces outward
+            side_faces.append([v2, v1, v1 + n_verts, v2 + n_verts])
 
     all_faces = top_faces + bottom_faces + side_faces
+
+    # Validate manifold quality
+    validate_manifold(all_vertices, all_faces, label="thicken_surface")
 
     return all_vertices, all_faces
 
@@ -2274,6 +2301,8 @@ def main():
                         removed = len(holes) - len(good_holes)
                         print(f"  {idx}: removed {removed} holes inside hardware mask "
                               f"({len(good_holes)} remain)")
+                        # Keep all holes for pins; validated subset for drum body pilot holes
+                        p['all_hole_positions'] = holes
                         p['hole_positions'] = good_holes
 
                 if total_removed > 0:
