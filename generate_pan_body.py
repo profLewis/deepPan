@@ -46,6 +46,10 @@ POCKET_TOLERANCE = 1.0         # mm extra around pad footprint for fit
 HW_BUFFER = 2.5                # mm clearance around hardware
 PILOT_R = 1.0                  # mm — M2 pilot hole radius (2mm dia)
 PILOT_DEPTH = 5.0              # mm — visible from pocket floor
+# M2 countersink + plug bore at pocket floor (DIN 965 flat-head)
+CSINK_TOP_R = 2.0              # mm — head radius (4.0mm dia)
+CSINK_TAPER_DEPTH = 1.0        # mm — 90° cone depth
+CSINK_PLUG_DEPTH = 2.0         # mm — cylindrical bore above taper for plug
 BASE_THICKNESS = 10.0          # mm — base plate
 VOID_INSET = 15.0              # mm from drum edge
 VOID_CLEARANCE = 20.0          # mm below underside of pan surface
@@ -497,19 +501,17 @@ def main():
     n_after = int(grid.sum())
     print(f"  {n_after / 1e6:.0f}M voxels")
 
-    # Phase 8: Pad screw pilot holes (M2, from pocket floor downward)
-    # The screw goes through the pad (clearance hole) and threads into
-    # the drum body below the pocket floor. The pilot hole must be
-    # visible from above (starts at the pocket floor, goes PILOT_DEPTH down).
-    print("\nPhase 8: Pad screw holes...")
+    # Phase 8: Pad screw holes — pilot + countersink taper + plug bore
+    # Profile from pocket floor downward:
+    #   plug bore (CSINK_TOP_R, CSINK_PLUG_DEPTH) → taper (CSINK_TOP_R→PILOT_R, CSINK_TAPER_DEPTH) → pilot (PILOT_R)
+    print("\nPhase 8: Pad screw holes + countersink + plug bore...")
+    import math
+    total_csink = CSINK_PLUG_DEPTH + CSINK_TAPER_DEPTH
     for hx, hy, hz in screw_holes:
-        ix_min = max(0, int((hx - PILOT_R - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((hx + PILOT_R - x_range[0]) / res) + 2)
-        iz_min = max(0, int((hz - PILOT_R - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((hz + PILOT_R - z_range[0]) / res) + 2)
-        # hy is the surface Y at the screw position.
-        # The pocket floor is at hy - POCKET_DEPTH.
-        # The pilot hole goes from pocket floor down PILOT_DEPTH further.
+        ix_min = max(0, int((hx - CSINK_TOP_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((hx + CSINK_TOP_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((hz - CSINK_TOP_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((hz + CSINK_TOP_R - z_range[0]) / res) + 2)
         pocket_floor = hy - POCKET_DEPTH
         iy_top = int((pocket_floor - y_range[0]) / res) + 1
         iy_bot = max(0, int((pocket_floor - PILOT_DEPTH - y_range[0]) / res))
@@ -517,9 +519,23 @@ def main():
             dx = x_range[ix] - hx
             for iz in range(iz_min, iz_max + 1):
                 dz = z_range[iz] - hz
-                if dx * dx + dz * dz <= PILOT_R * PILOT_R:
+                r_sq = dx * dx + dz * dz
+                if r_sq <= PILOT_R * PILOT_R:
+                    # Cylindrical pilot hole — full depth
                     grid[ix, iy_bot:iy_top, iz] = 0
-    print(f"  {len(screw_holes)} pad screw holes (2mm dia, {PILOT_DEPTH}mm deep)")
+                elif r_sq <= CSINK_TOP_R * CSINK_TOP_R:
+                    r = math.sqrt(r_sq)
+                    # Plug bore: top CSINK_PLUG_DEPTH at full CSINK_TOP_R
+                    plug_depth = CSINK_PLUG_DEPTH
+                    # Taper: from CSINK_TOP_R down to PILOT_R
+                    if r <= PILOT_R:
+                        taper_extra = CSINK_TAPER_DEPTH
+                    else:
+                        taper_extra = CSINK_TAPER_DEPTH * (CSINK_TOP_R - r) / (CSINK_TOP_R - PILOT_R)
+                    max_depth = plug_depth + taper_extra
+                    iy_cone_bot = max(iy_bot, int((pocket_floor - max_depth - y_range[0]) / res))
+                    grid[ix, iy_cone_bot:iy_top, iz] = 0
+    print(f"  {len(screw_holes)} holes ({PILOT_R*2}mm pilot + {CSINK_TOP_R*2}mm csink + {CSINK_PLUG_DEPTH}mm bore)")
 
     # Phase 8b: Base attachment screw holes
     # M3 pilot holes in drum body (tapped), clearance holes in base plate

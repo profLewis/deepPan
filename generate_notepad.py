@@ -99,8 +99,9 @@ SCREW_HOLE_COUNT = 4          # Number of holes per pad
 COUNTERSINK_TOP_DIA = 4.0     # M2 flat head ~3.8mm + 0.2mm clearance
 COUNTERSINK_BOT_DIA = SCREW_HOLE_DIAMETER  # tapers to shaft clearance (2.2mm)
 COUNTERSINK_DEPTH = 1.0       # ~1mm taper depth (90° DIN 965)
+PLUG_BORE_DEPTH = 2.0         # mm — cylindrical bore above taper for flush plug
 
-# Cap dimensions (press-fit plug to cover countersink)
+# Cap dimensions (press-fit plug to cover countersink + plug bore)
 CAP_CLEARANCE = 0.1           # mm clearance for press fit
 CAP_NEEDLE_HOLE = 0.8         # mm needle hole for cap removal
 
@@ -879,32 +880,36 @@ def _create_frustum(r_top, r_bot, height, segments=24):
     return trimesh.Trimesh(vertices=verts, faces=np.array(faces), process=True)
 
 
-def _create_screw_tool(shaft_r, head_r, total_h, taper_h, segments=24):
+def _create_screw_tool(shaft_r, head_r, total_h, taper_h, plug_h=PLUG_BORE_DEPTH, segments=24):
     """
-    Create compound screw hole tool: cylindrical shaft + tapered countersink top.
+    Create compound screw hole tool: shaft + taper + plug bore.
 
-    Single watertight mesh for one boolean operation (more reliable than two).
-    - shaft_r: radius of through-hole shaft
-    - head_r: radius at top of countersink taper
-    - total_h: total height of tool (shaft + overshoot)
-    - taper_h: height of the tapered countersink at top
+    Profile (bottom to top):
+      - Cylindrical shaft (shaft_r) from z_bot to z_taper
+      - Tapered countersink (shaft_r → head_r) from z_taper to z_plug
+      - Cylindrical plug bore (head_r) from z_plug to z_top
+
+    Single watertight mesh for one boolean operation.
     """
     angles = np.linspace(0, 2 * np.pi, segments, endpoint=False)
     cos_a, sin_a = np.cos(angles), np.sin(angles)
     z_bot = -total_h / 2
-    z_taper = total_h / 2 - taper_h
+    z_taper = total_h / 2 - plug_h - taper_h   # taper starts here
+    z_plug = total_h / 2 - plug_h               # plug bore starts here
     z_top = total_h / 2
     # Ring 0: shaft bottom
     v0 = np.column_stack([shaft_r * cos_a, shaft_r * sin_a, np.full(segments, z_bot)])
-    # Ring 1: shaft top / taper bottom (same radius as shaft)
+    # Ring 1: shaft top / taper bottom (shaft radius)
     v1 = np.column_stack([shaft_r * cos_a, shaft_r * sin_a, np.full(segments, z_taper)])
-    # Ring 2: taper top (wider radius)
-    v2 = np.column_stack([head_r * cos_a, head_r * sin_a, np.full(segments, z_top)])
+    # Ring 2: taper top / plug bore bottom (head radius)
+    v2 = np.column_stack([head_r * cos_a, head_r * sin_a, np.full(segments, z_plug)])
+    # Ring 3: plug bore top (head radius)
+    v3 = np.column_stack([head_r * cos_a, head_r * sin_a, np.full(segments, z_top)])
     ct = np.array([[0, 0, z_top]])
     cb = np.array([[0, 0, z_bot]])
-    verts = np.vstack([v0, v1, v2, ct, cb])
+    verts = np.vstack([v0, v1, v2, v3, ct, cb])
     s = segments
-    ic_t, ic_b = 3 * s, 3 * s + 1
+    ic_t, ic_b = 4 * s, 4 * s + 1
     faces = []
     for i in range(s):
         j = (i + 1) % s
@@ -914,8 +919,11 @@ def _create_screw_tool(shaft_r, head_r, total_h, taper_h, segments=24):
         # Taper side (v1→v2, radius expands)
         faces.append([s + i, s + j, 2 * s + j])
         faces.append([s + i, 2 * s + j, 2 * s + i])
-        # Top cap (center → v2 ring)
-        faces.append([ic_t, 2 * s + i, 2 * s + j])
+        # Plug bore side (v2→v3, same radius)
+        faces.append([2 * s + i, 2 * s + j, 3 * s + j])
+        faces.append([2 * s + i, 3 * s + j, 3 * s + i])
+        # Top cap (center → v3 ring)
+        faces.append([ic_t, 3 * s + i, 3 * s + j])
         # Bottom cap (center → v0 ring, reversed)
         faces.append([ic_b, j, i])
     mesh = trimesh.Trimesh(vertices=verts, faces=np.array(faces), process=True)
@@ -934,7 +942,7 @@ def generate_screw_cap(output_dir, segments=24):
     """
     r_top = (COUNTERSINK_TOP_DIA - CAP_CLEARANCE) / 2
     r_bot = (COUNTERSINK_BOT_DIA - CAP_CLEARANCE) / 2
-    h = COUNTERSINK_DEPTH
+    h = COUNTERSINK_DEPTH + PLUG_BORE_DEPTH  # taper + plug bore
     needle_r = CAP_NEEDLE_HOLE / 2
 
     # Build annular frustum mesh directly: outer taper + inner needle hole
@@ -942,31 +950,39 @@ def generate_screw_cap(output_dir, segments=24):
     cos_a, sin_a = np.cos(angles), np.sin(angles)
     s = segments
 
-    # Outer taper rings
-    ot = np.column_stack([r_top * cos_a, r_top * sin_a, np.full(s, h / 2)])      # outer top
-    ob = np.column_stack([r_bot * cos_a, r_bot * sin_a, np.full(s, -h / 2)])     # outer bottom
+    # Cap profile (top to bottom): plug cylinder (r_top) then taper (r_top→r_bot)
+    z_top = h / 2
+    z_taper_top = h / 2 - PLUG_BORE_DEPTH   # where taper begins
+    z_bot = -h / 2
+    # Outer rings: top (plug), taper transition, bottom
+    o_top = np.column_stack([r_top * cos_a, r_top * sin_a, np.full(s, z_top)])
+    o_mid = np.column_stack([r_top * cos_a, r_top * sin_a, np.full(s, z_taper_top)])
+    o_bot = np.column_stack([r_bot * cos_a, r_bot * sin_a, np.full(s, z_bot)])
     # Inner needle hole rings (constant radius)
-    it_ = np.column_stack([needle_r * cos_a, needle_r * sin_a, np.full(s, h / 2)])  # inner top
-    ib = np.column_stack([needle_r * cos_a, needle_r * sin_a, np.full(s, -h / 2)]) # inner bottom
+    i_top = np.column_stack([needle_r * cos_a, needle_r * sin_a, np.full(s, z_top)])
+    i_bot = np.column_stack([needle_r * cos_a, needle_r * sin_a, np.full(s, z_bot)])
 
-    verts = np.vstack([ot, ob, it_, ib])  # 4*s vertices
-    # ot: 0..s-1, ob: s..2s-1, it: 2s..3s-1, ib: 3s..4s-1
+    verts = np.vstack([o_top, o_mid, o_bot, i_top, i_bot])
+    # o_top:0, o_mid:s, o_bot:2s, i_top:3s, i_bot:4s
 
     faces = []
     for i in range(s):
         j = (i + 1) % s
-        # Outer side (ot→ob)
+        # Plug cylinder side (o_top→o_mid)
         faces.append([i, j, s + j])
         faces.append([i, s + j, s + i])
-        # Inner side (it→ib, reversed winding)
-        faces.append([2 * s + i, 3 * s + i, 3 * s + j])
-        faces.append([2 * s + i, 3 * s + j, 2 * s + j])
-        # Top annular face (ot→it)
-        faces.append([i, 2 * s + i, 2 * s + j])
-        faces.append([i, 2 * s + j, j])
-        # Bottom annular face (ob→ib, reversed)
-        faces.append([s + i, s + j, 3 * s + j])
-        faces.append([s + i, 3 * s + j, 3 * s + i])
+        # Taper side (o_mid→o_bot)
+        faces.append([s + i, s + j, 2 * s + j])
+        faces.append([s + i, 2 * s + j, 2 * s + i])
+        # Inner side (i_top→i_bot, reversed winding)
+        faces.append([3 * s + i, 4 * s + i, 4 * s + j])
+        faces.append([3 * s + i, 4 * s + j, 3 * s + j])
+        # Top annular face (o_top→i_top)
+        faces.append([i, 3 * s + i, 3 * s + j])
+        faces.append([i, 3 * s + j, j])
+        # Bottom annular face (o_bot→i_bot, reversed)
+        faces.append([2 * s + i, 2 * s + j, 4 * s + j])
+        faces.append([2 * s + i, 4 * s + j, 4 * s + i])
 
     verts = np.array(verts)
     faces = np.array(faces)

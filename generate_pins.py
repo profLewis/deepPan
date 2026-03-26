@@ -29,71 +29,81 @@ OUTPUT = "data/notepads/pins.obj"
 # M2 flat-head pin dimensions (DIN 965)
 HEAD_TOP_R = 1.9       # mm — head top radius (3.8mm dia)
 HEAD_BOT_R = 1.0       # mm — transitions to shaft (2.0mm dia)
-HEAD_HEIGHT = 0.9      # mm — cone height (90° included angle)
+TAPER_HEIGHT = 0.9     # mm — cone height (90° included angle)
+PLUG_HEIGHT = 2.0      # mm — cylindrical plug above taper (fits bore recess)
 SHAFT_R = 1.0          # mm — shaft radius (2.0mm dia, M2)
-SHAFT_LENGTH = 15.0    # mm — shaft below head (total pin = 15.9mm ≈ 16mm)
+SHAFT_LENGTH = 13.1    # mm — shaft below taper (total = plug + taper + shaft = 16mm)
 SEGMENTS = 24          # angular resolution
 
 
 def generate_pin_mesh():
     """Generate a single pin mesh centered at origin, pointing along +Z.
 
-    Head cone at top (Z=0 to Z=-HEAD_HEIGHT), shaft below (down to -HEAD_HEIGHT-SHAFT_LENGTH).
-    The head top face is at Z=0 (playing surface level).
+    Profile (top to bottom):
+      Z=0                          → top face (plug top, flush with surface)
+      Z=0 to Z=-PLUG_HEIGHT       → plug cylinder (HEAD_TOP_R)
+      Z=-PLUG to Z=-PLUG-TAPER    → tapered cone (HEAD_TOP_R → HEAD_BOT_R)
+      Z=-PLUG-TAPER to Z=-total   → shaft cylinder (SHAFT_R)
 
     Returns (vertices, faces) as numpy arrays.
     """
+    S = SEGMENTS
     verts = []
     faces = []
 
-    # --- Head cone: Z=0 (top, wide) to Z=-HEAD_HEIGHT (bottom, narrow) ---
-    # Top ring (head surface)
+    z_top = 0
+    z_plug_bot = -PLUG_HEIGHT
+    z_taper_bot = -(PLUG_HEIGHT + TAPER_HEIGHT)
+    z_shaft_bot = -(PLUG_HEIGHT + TAPER_HEIGHT + SHAFT_LENGTH)
+
+    # Top cap center
     top_center = len(verts)
-    verts.append([0, 0, 0])  # center of head top
-    top_ring_start = len(verts)
-    for i in range(SEGMENTS):
-        angle = 2 * math.pi * i / SEGMENTS
-        verts.append([HEAD_TOP_R * math.cos(angle),
-                      HEAD_TOP_R * math.sin(angle), 0])
-    # Top face (fan)
-    for i in range(SEGMENTS):
-        faces.append([top_center, top_ring_start + i,
-                      top_ring_start + (i + 1) % SEGMENTS])
+    verts.append([0, 0, z_top])
 
-    # Bottom of head ring
-    head_bot_start = len(verts)
-    z_bot = -HEAD_HEIGHT
-    for i in range(SEGMENTS):
-        angle = 2 * math.pi * i / SEGMENTS
-        verts.append([HEAD_BOT_R * math.cos(angle),
-                      HEAD_BOT_R * math.sin(angle), z_bot])
+    # Ring 0: plug top (HEAD_TOP_R at z_top)
+    r0_start = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([HEAD_TOP_R * math.cos(a), HEAD_TOP_R * math.sin(a), z_top])
 
-    # Head cone side faces
-    for i in range(SEGMENTS):
-        i1 = (i + 1) % SEGMENTS
-        faces.append([top_ring_start + i, head_bot_start + i, head_bot_start + i1])
-        faces.append([top_ring_start + i, head_bot_start + i1, top_ring_start + i1])
+    # Ring 1: plug bottom (HEAD_TOP_R at z_plug_bot)
+    r1_start = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([HEAD_TOP_R * math.cos(a), HEAD_TOP_R * math.sin(a), z_plug_bot])
 
-    # --- Shaft cylinder: Z=-HEAD_HEIGHT to Z=-(HEAD_HEIGHT+SHAFT_LENGTH) ---
-    shaft_bot_start = len(verts)
-    z_shaft = -(HEAD_HEIGHT + SHAFT_LENGTH)
-    for i in range(SEGMENTS):
-        angle = 2 * math.pi * i / SEGMENTS
-        verts.append([SHAFT_R * math.cos(angle),
-                      SHAFT_R * math.sin(angle), z_shaft])
+    # Ring 2: taper bottom (HEAD_BOT_R at z_taper_bot)
+    r2_start = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([HEAD_BOT_R * math.cos(a), HEAD_BOT_R * math.sin(a), z_taper_bot])
 
-    # Shaft side faces (head_bot_start → shaft_bot_start)
-    for i in range(SEGMENTS):
-        i1 = (i + 1) % SEGMENTS
-        faces.append([head_bot_start + i, shaft_bot_start + i, shaft_bot_start + i1])
-        faces.append([head_bot_start + i, shaft_bot_start + i1, head_bot_start + i1])
+    # Ring 3: shaft bottom (SHAFT_R at z_shaft_bot)
+    r3_start = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([SHAFT_R * math.cos(a), SHAFT_R * math.sin(a), z_shaft_bot])
 
-    # Shaft bottom cap
+    # Bottom cap center
     bot_center = len(verts)
-    verts.append([0, 0, z_shaft])
-    for i in range(SEGMENTS):
-        faces.append([bot_center, shaft_bot_start + (i + 1) % SEGMENTS,
-                      shaft_bot_start + i])
+    verts.append([0, 0, z_shaft_bot])
+
+    # Faces
+    for i in range(S):
+        j = (i + 1) % S
+        # Top cap fan
+        faces.append([top_center, r0_start + i, r0_start + j])
+        # Plug cylinder side (r0 → r1)
+        faces.append([r0_start + i, r1_start + i, r1_start + j])
+        faces.append([r0_start + i, r1_start + j, r0_start + j])
+        # Taper cone side (r1 → r2)
+        faces.append([r1_start + i, r2_start + i, r2_start + j])
+        faces.append([r1_start + i, r2_start + j, r1_start + j])
+        # Shaft cylinder side (r2 → r3)
+        faces.append([r2_start + i, r3_start + i, r3_start + j])
+        faces.append([r2_start + i, r3_start + j, r2_start + j])
+        # Bottom cap fan (reversed)
+        faces.append([bot_center, r3_start + j, r3_start + i])
 
     return np.array(verts, dtype=float), faces
 
@@ -132,10 +142,12 @@ def main():
 
     # Generate template pin
     pin_v, pin_f = generate_pin_mesh()
+    total_len = PLUG_HEIGHT + TAPER_HEIGHT + SHAFT_LENGTH
     print(f"  Pin template: {len(pin_v)}v, {len(pin_f)}f")
-    print(f"  Head: {HEAD_TOP_R*2:.1f}mm → {HEAD_BOT_R*2:.1f}mm, {HEAD_HEIGHT:.1f}mm tall")
+    print(f"  Plug: {HEAD_TOP_R*2:.1f}mm dia, {PLUG_HEIGHT:.1f}mm tall")
+    print(f"  Taper: {HEAD_TOP_R*2:.1f}mm → {HEAD_BOT_R*2:.1f}mm, {TAPER_HEIGHT:.1f}mm")
     print(f"  Shaft: {SHAFT_R*2:.1f}mm dia, {SHAFT_LENGTH:.1f}mm long")
-    print(f"  Total length: {HEAD_HEIGHT + SHAFT_LENGTH:.1f}mm")
+    print(f"  Total length: {total_len:.1f}mm")
 
     total_pins = 0
     with open(OUTPUT, 'w') as out:
