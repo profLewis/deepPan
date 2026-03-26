@@ -1143,7 +1143,8 @@ def _boss_contained_in_boundary(cx, cy, boss_radius, poly_x, poly_y):
 
 def compute_hole_positions(pan_verts, pan_faces, centroid, normal,
                            count=SCREW_HOLE_COUNT, inset=SCREW_HOLE_INSET,
-                           mount_center=None, mount_clearance=0.0):
+                           mount_center=None, mount_clearance=0.0,
+                           hw_mask_2d=None, tangent_xl=None, tangent_yl=None):
     """
     Compute screw hole positions equally spaced around the pad boundary.
 
@@ -1153,6 +1154,7 @@ def compute_hole_positions(pan_verts, pan_faces, centroid, normal,
     3. Pick `count` points at equal arc-length intervals
     4. Step each point inward by `inset` mm toward the centroid
     5. Reject any point within `mount_clearance` of `mount_center`
+       OR inside `hw_mask_2d` (symmetric hardware mask polygon in tangent plane)
 
     Returns list of positions in 3D world coordinates (on the surface).
     """
@@ -1217,6 +1219,20 @@ def compute_hole_positions(pan_verts, pan_faces, centroid, normal,
     if mount_center is not None and mount_clearance > 0:
         candidates = [p for p in candidates
                       if np.linalg.norm(p - mount_center) >= mount_clearance]
+
+    # Filter out candidates inside the symmetric hardware mask
+    if hw_mask_2d is not None and tangent_xl is not None:
+        from shapely.geometry import Point as _HwPt
+        filtered = []
+        for p in candidates:
+            rel = p - centroid
+            px, py = float(rel @ tangent_xl), float(rel @ tangent_yl)
+            if not hw_mask_2d.contains(_HwPt(px, py)):
+                filtered.append(p)
+        n_rejected = len(candidates) - len(filtered)
+        if n_rejected > 0:
+            print(f"  Rejected {n_rejected} holes in hardware mask zone")
+        candidates = filtered
 
     # Select `count` candidates with maximum separation between them.
     # Greedy: pick first, then always pick the candidate furthest from
@@ -1554,9 +1570,10 @@ def generate_notepad(note_index, obj_path, output_dir,
                     outward = outward / ol if ol > 1e-8 else np.array([1, 0, 0])
 
                 radial_dist = np.linalg.norm(pt - boundary_centroid)
-                # Use percentage-based OR minimum 4mm absolute extension,
-                # whichever is larger — keeps flange compact to avoid overlap
-                extension = max(radial_dist * (groove_spread - 1.0), 4.0)
+                # Use percentage-based OR minimum extension (keeps flange
+                # compact to avoid overlap). I4 gets more room for screw holes.
+                min_ext = 5.0 if note_index == 'I4' else 4.0
+                extension = max(radial_dist * (groove_spread - 1.0), min_ext)
                 ext_pt = pt + outward * extension
                 extended_pts.append(ext_pt)
 
@@ -1685,13 +1702,46 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"Generating M2 through-holes (boolean subtraction)...")
     print(f"  Hole diameter: {SCREW_HOLE_DIAMETER}mm, Through full {pan_thickness}mm thickness")
 
+    # Compute symmetric hardware mask in tangent plane for ALL rings.
+    # This matches the yellow zones on the maps — screw holes must avoid this area.
+    from scipy.spatial import ConvexHull as _ScrewCH
+    from shapely.geometry import Polygon as _ScrewPoly, Point as _ScrewPt
+    hw_radius = mount_inner_dia / 2 + mount_wall
+    _n_hat_hw = notepad_normal / np.linalg.norm(notepad_normal)
+    if abs(_n_hat_hw[0]) < 0.9:
+        _xl_hw = np.cross(_n_hat_hw, [1, 0, 0])
+    else:
+        _xl_hw = np.cross(_n_hat_hw, [0, 1, 0])
+    _xl_hw /= np.linalg.norm(_xl_hw)
+    _yl_hw = np.cross(_n_hat_hw, _xl_hw)
+    _cyl_rel = cylinder_verts_transformed - pan_surface_centroid
+    _cyl_2d = np.column_stack([_cyl_rel @ _xl_hw, _cyl_rel @ _yl_hw])
+    _hw_buffer = 1.5 if ring == 'inner' else 3.0  # buffer distance
+    try:
+        _ch = _ScrewCH(_cyl_2d)
+        _hw_poly = _ScrewPoly(_cyl_2d[_ch.vertices])
+        _long_2d = np.array([pad_long_axis @ _xl_hw, pad_long_axis @ _yl_hw])
+        _long_2d /= np.linalg.norm(_long_2d)
+        _coords = np.array(_hw_poly.exterior.coords)
+        _proj = np.outer(_coords @ _long_2d, _long_2d)
+        _reflected = 2 * _proj - _coords
+        _mirror = _ScrewPoly(_reflected)
+        _hw_poly = _hw_poly.union(_mirror)
+        if _hw_poly.geom_type == 'MultiPolygon':
+            _hw_poly = _hw_poly.convex_hull
+        _hw_mask = _hw_poly.buffer(_hw_buffer)
+        print(f"  Symmetric hardware mask: area={_hw_mask.area:.0f}mm² (buffered {_hw_buffer}mm)")
+    except Exception:
+        _hw_mask = _ScrewPt(0, 0).buffer(hw_radius + _hw_buffer)
+        print(f"  Hardware mask: circular fallback r={hw_radius + _hw_buffer:.1f}mm")
+
     if ring == 'inner' or ring == 'central':
         # Grid-based screw hole placement: sample candidate points inside
         # the pad, reject any too close to the edge or the hardware zone,
         # then greedily pick well-separated positions.
         if ring == 'inner':
-            MIN_EDGE_DIST = 1.5   # mm from flange boundary (was 2.0)
-            MIN_HW_DIST = 1.5     # mm from nearest hardware edge (was 2.0)
+            MIN_EDGE_DIST = 1.5   # mm from flange boundary
+            MIN_HW_DIST = 1.5     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 2         # 2 screws for inner pads
         else:
@@ -1699,8 +1749,6 @@ def generate_notepad(note_index, obj_path, output_dir,
             MIN_HW_DIST = 3.0     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 4
-
-        hw_radius = mount_inner_dia / 2 + mount_wall  # hardware zone radius
 
         # Build tangent-plane basis
         n_hat = notepad_normal / np.linalg.norm(notepad_normal)
@@ -1771,10 +1819,10 @@ def generate_notepad(note_index, obj_path, output_dir,
                             break
                     if not edge_ok:
                         continue
-                    # Check distance from hardware center
-                    hw_dist = math.sqrt(gx * gx + gy * gy)
-                    if hw_dist < hw_radius + MIN_HW_DIST:
+                    # Check against symmetric hardware mask polygon
+                    if _hw_mask.contains(_ScrewPt(gx, gy)):
                         continue
+                    hw_dist = math.sqrt(gx * gx + gy * gy)
                     candidates.append((gx, gy, hw_dist))
 
             if ring == 'inner' and len(candidates) >= 2:
@@ -1811,15 +1859,12 @@ def generate_notepad(note_index, obj_path, output_dir,
             hole_positions = []
             print(f"  {ring.title()} ring: no boundary found")
     else:
-        if ring == 'central':
-            # Large clearance to avoid the full hardware footprint (cap + plate + grip)
-            mount_clearance = 15.0  # clears the ~11mm yellow zone with margin
-        else:
-            mount_clearance = 0.0
+        # Outer ring: use symmetric hardware mask for filtering
         hole_positions = compute_hole_positions(
             pan_verts, pan_faces, pan_surface_centroid, notepad_normal,
             inset=SCREW_HOLE_INSET,
-            mount_center=pan_surface_centroid, mount_clearance=mount_clearance)
+            mount_center=pan_surface_centroid, mount_clearance=0.0,
+            hw_mask_2d=_hw_mask, tangent_xl=_xl_hw, tangent_yl=_yl_hw)
 
     if hole_positions:
         pre_vert_count = len(pan_solid_verts)
