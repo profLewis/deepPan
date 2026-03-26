@@ -36,6 +36,16 @@ from generate_notepad import (
     compute_leveling_rotation, NOTE_BY_INDEX, NOTE_MAPPING, PAN_THICKNESS
 )
 from generate_quarter import classify_drum_wall, reindex_mesh, subdivide_mesh
+from generate_cylinders import (
+    INNER_CYL_OUTER_R, INNER_CYL_INNER_R, INNER_CYL_WALL,
+    OUTER_CYL_OUTER_R, OUTER_CYL_INNER_R, OUTER_CYL_WALL,
+    CYL_TOLERANCE, KEY_WIDTH, KEY_DEPTH, KEY_HEIGHT, KEY_ANGLE,
+    WIRE_HOLE_R, WIRE_HOLE_ANGLE, WIRE_HOLE_CENTER_HEIGHT,
+    INNER_CYL_SCREW_N, OUTER_CYL_SCREW_N,
+    CYL_SCREW_PILOT_R, CYL_SCREW_CLEAR_R, CYL_SCREW_DEPTH,
+    INNER_CYL_SCREW_R, OUTER_CYL_SCREW_R,
+    is_in_key_arc, is_in_wire_hole,
+)
 
 # ============================================================
 # Parameters
@@ -474,7 +484,143 @@ def main():
     del void_top_map
     print(f"  Voided {n_void / 1e6:.1f}M voxels")
 
-    del iy_top, inside_drum, col_top, valid
+    # Keep col_top for cylinder surface clipping (needed by Tasks 9-10)
+    del inside_drum, valid
+    gc.collect()
+
+    # ── Phase 6b: Inner structural cylinder ──────────────────────────
+    # Vertical cylinder through drum center, 250mm OD, 10mm wall, clipped at surface.
+    print("\nPhase 6b: Inner structural cylinder...")
+    inner_cyl_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
+    n_inner_cyl = 0
+    iy_base_top_cyl = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
+    for ix in range(nx):
+        for iz in range(nz):
+            r_sq = x_range[ix]**2 + z_range[iz]**2
+            if INNER_CYL_INNER_R**2 <= r_sq <= INNER_CYL_OUTER_R**2:
+                # Clip at drum surface (col_top gives the surface Y)
+                surf_y = col_top[ix, iz]
+                iy_top_cyl = min(ny, int((surf_y - y_range[0]) / res))
+                if iy_top_cyl > iy_base_top_cyl:
+                    for iy in range(iy_base_top_cyl, iy_top_cyl):
+                        grid[ix, iy, iz] = 1
+                        inner_cyl_mask[ix, iy, iz] = 1
+                        n_inner_cyl += 1
+    print(f"  Inner cyl: R=[{INNER_CYL_INNER_R:.0f}, {INNER_CYL_OUTER_R:.0f}]mm, "
+          f"{n_inner_cyl / 1e6:.1f}M voxels")
+
+    # ── Phase 6c: Outer structural cylinder ──────────────────────────
+    print("\nPhase 6c: Outer structural cylinder...")
+    outer_cyl_mask = np.zeros((nx, ny, nz), dtype=np.uint8)
+    n_outer_cyl = 0
+    for ix in range(nx):
+        for iz in range(nz):
+            r_sq = x_range[ix]**2 + z_range[iz]**2
+            if OUTER_CYL_INNER_R**2 <= r_sq <= OUTER_CYL_OUTER_R**2:
+                surf_y = col_top[ix, iz]
+                iy_top_cyl = min(ny, int((surf_y - y_range[0]) / res))
+                if iy_top_cyl > iy_base_top_cyl:
+                    for iy in range(iy_base_top_cyl, iy_top_cyl):
+                        grid[ix, iy, iz] = 1
+                        outer_cyl_mask[ix, iy, iz] = 1
+                        n_outer_cyl += 1
+    print(f"  Outer cyl: R=[{OUTER_CYL_INNER_R:.0f}, {OUTER_CYL_OUTER_R:.0f}]mm, "
+          f"{n_outer_cyl / 1e6:.1f}M voxels")
+
+    # ── Phase 6d: Key from outer cylinder + slot in inner cylinder ───
+    print("\nPhase 6d: Key/slot alignment...")
+    n_key = 0
+    n_slot = 0
+    key_y_top = y_min + BASE_THICKNESS + KEY_HEIGHT
+    iy_key_top = min(ny, int((key_y_top - y_range[0]) / res) + 1)
+    for ix in range(nx):
+        for iz in range(nz):
+            r = math.sqrt(x_range[ix]**2 + z_range[iz]**2)
+            angle = math.atan2(z_range[iz], x_range[ix])
+            if not is_in_key_arc(angle):
+                continue
+            for iy in range(iy_base_top_cyl, iy_key_top):
+                # Key: fill the gap between inner and outer cylinder
+                if INNER_CYL_OUTER_R - KEY_DEPTH <= r <= OUTER_CYL_INNER_R:
+                    if grid[ix, iy, iz] == 0:
+                        grid[ix, iy, iz] = 1
+                        outer_cyl_mask[ix, iy, iz] = 1
+                        n_key += 1
+                # Slot: cut into inner cylinder outer wall
+                if INNER_CYL_OUTER_R - KEY_DEPTH <= r <= INNER_CYL_OUTER_R:
+                    if inner_cyl_mask[ix, iy, iz] == 1:
+                        grid[ix, iy, iz] = 0
+                        inner_cyl_mask[ix, iy, iz] = 0
+                        n_slot += 1
+    print(f"  Key: {n_key} voxels added, Slot: {n_slot} voxels removed")
+
+    # ── Phase 6e: Wiring hole through both cylinders ─────────────────
+    print("\nPhase 6e: Wiring hole (30mm dia)...")
+    n_wire = 0
+    wire_base_y = y_min + BASE_THICKNESS
+    for ix in range(nx):
+        for iz in range(nz):
+            r_sq = x_range[ix]**2 + z_range[iz]**2
+            # Only process voxels in the cylinder wall region
+            if r_sq < INNER_CYL_INNER_R**2 or r_sq > OUTER_CYL_OUTER_R**2:
+                continue
+            for iy in range(ny):
+                y_val = y_range[iy]
+                if is_in_wire_hole(x_range[ix], z_range[iz], y_val,
+                                   wire_base_y):
+                    if grid[ix, iy, iz] == 1:
+                        grid[ix, iy, iz] = 0
+                        inner_cyl_mask[ix, iy, iz] = 0
+                        outer_cyl_mask[ix, iy, iz] = 0
+                        n_wire += 1
+    print(f"  Wiring hole: {n_wire} voxels removed")
+
+    # ── Phase 6f: Cylinder screw holes + base plate clearance ────────
+    print("\nPhase 6f: Cylinder base attachment screws...")
+    cyl_screw_positions = []
+    # Inner cylinder screws
+    for si in range(INNER_CYL_SCREW_N):
+        angle = 2 * math.pi * si / INNER_CYL_SCREW_N
+        sx = INNER_CYL_SCREW_R * math.cos(angle)
+        sz = INNER_CYL_SCREW_R * math.sin(angle)
+        sy = y_min + BASE_THICKNESS
+        cyl_screw_positions.append((sx, sy, sz))
+        # Pilot hole in cylinder (upward from base top)
+        iy_bot_s = int((sy - y_range[0]) / res)
+        iy_top_s = min(ny, int((sy + CYL_SCREW_DEPTH - y_range[0]) / res) + 1)
+        ix_min = max(0, int((sx - CYL_SCREW_PILOT_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + CYL_SCREW_PILOT_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - CYL_SCREW_PILOT_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + CYL_SCREW_PILOT_R - z_range[0]) / res) + 2)
+        for ixx in range(ix_min, ix_max + 1):
+            dx = x_range[ixx] - sx
+            for izz in range(iz_min, iz_max + 1):
+                dz = z_range[izz] - sz
+                if dx * dx + dz * dz <= CYL_SCREW_PILOT_R ** 2:
+                    grid[ixx, iy_bot_s:iy_top_s, izz] = 0
+
+    # Outer cylinder screws
+    for si in range(OUTER_CYL_SCREW_N):
+        angle = 2 * math.pi * si / OUTER_CYL_SCREW_N + math.pi / OUTER_CYL_SCREW_N
+        sx = OUTER_CYL_SCREW_R * math.cos(angle)
+        sz = OUTER_CYL_SCREW_R * math.sin(angle)
+        sy = y_min + BASE_THICKNESS
+        cyl_screw_positions.append((sx, sy, sz))
+        iy_bot_s = int((sy - y_range[0]) / res)
+        iy_top_s = min(ny, int((sy + CYL_SCREW_DEPTH - y_range[0]) / res) + 1)
+        ix_min = max(0, int((sx - CYL_SCREW_PILOT_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + CYL_SCREW_PILOT_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - CYL_SCREW_PILOT_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + CYL_SCREW_PILOT_R - z_range[0]) / res) + 2)
+        for ixx in range(ix_min, ix_max + 1):
+            dx = x_range[ixx] - sx
+            for izz in range(iz_min, iz_max + 1):
+                dz = z_range[izz] - sz
+                if dx * dx + dz * dz <= CYL_SCREW_PILOT_R ** 2:
+                    grid[ixx, iy_bot_s:iy_top_s, izz] = 0
+    print(f"  {INNER_CYL_SCREW_N + OUTER_CYL_SCREW_N} cylinder screws")
+
+    del col_top, iy_top
     gc.collect()
 
     # Phase 7: Hardware holes — stop at base plate top (don't go through base)
@@ -500,6 +646,63 @@ def main():
                     grid[ix_min + di, iy_base_top:, iz_min + dj] = 0
     n_after = int(grid.sum())
     print(f"  {n_after / 1e6:.0f}M voxels")
+
+    # Phase 7b: Bounding cylinder cavities (for central/inner push-cap mechanisms)
+    print("\nPhase 7b: Bounding cylinder cavities...")
+    from pathlib import Path as PathLib
+    bc_path = 'data/notepads/bounding_cylinders.obj'
+    n_bc_carved = 0
+    if PathLib(bc_path).exists():
+        bc_verts_all = []
+        bc_objects = {}
+        bc_current = None
+        with open(bc_path) as bcf:
+            for line in bcf:
+                line = line.strip()
+                if line.startswith('o '):
+                    bc_current = line[2:]
+                    bc_objects[bc_current] = {'v_start': len(bc_verts_all)}
+                elif line.startswith('v ') and bc_current:
+                    p = line.split()
+                    bc_verts_all.append([float(p[1]), float(p[2]), float(p[3])])
+        if bc_verts_all:
+            bc_verts_all = np.array(bc_verts_all)
+            # For each bounding cylinder, find XZ footprint and carve
+            for bc_name, bc_info in bc_objects.items():
+                v_start = bc_info['v_start']
+                # Find end of this object's vertices
+                next_starts = [info['v_start'] for info in bc_objects.values()
+                               if info['v_start'] > v_start]
+                v_end = min(next_starts) if next_starts else len(bc_verts_all)
+                bc_v = bc_verts_all[v_start:v_end]
+                if len(bc_v) < 3:
+                    continue
+
+                # XZ footprint circle (bounding cylinder is roughly circular)
+                bc_xz = bc_v[:, [0, 2]]
+                bc_center_xz = bc_xz.mean(axis=0)
+                bc_r = float(np.linalg.norm(bc_xz - bc_center_xz, axis=1).max())
+                bc_y_min = float(bc_v[:, 1].min())
+                bc_y_max = float(bc_v[:, 1].max())
+
+                ix_min = max(0, int((bc_center_xz[0] - bc_r - x_range[0]) / res) - 1)
+                ix_max = min(nx-1, int((bc_center_xz[0] + bc_r - x_range[0]) / res) + 2)
+                iz_min = max(0, int((bc_center_xz[1] - bc_r - z_range[0]) / res) - 1)
+                iz_max = min(nz-1, int((bc_center_xz[1] + bc_r - z_range[0]) / res) + 2)
+                iy_bot = max(0, int((bc_y_min - y_range[0]) / res))
+                iy_top = min(ny, int((bc_y_max - y_range[0]) / res) + 1)
+
+                for ixx in range(ix_min, ix_max + 1):
+                    dx = x_range[ixx] - bc_center_xz[0]
+                    for izz in range(iz_min, iz_max + 1):
+                        dz = z_range[izz] - bc_center_xz[1]
+                        if dx*dx + dz*dz <= bc_r*bc_r:
+                            before = int(grid[ixx, iy_bot:iy_top, izz].sum())
+                            grid[ixx, iy_bot:iy_top, izz] = 0
+                            n_bc_carved += before
+        print(f"  Carved {n_bc_carved / 1e6:.1f}M voxels for {len(bc_objects)} bounding cylinders")
+    else:
+        print(f"  No bounding cylinders file found ({bc_path})")
 
     # Phase 8: Pad screw holes — pilot + countersink taper + plug bore
     # Profile from pocket floor downward:
@@ -592,93 +795,49 @@ def main():
                 dz = z_range[iz] - sz
                 if dx * dx + dz * dz <= BASE_SCREW_CLEAR_R ** 2:
                     base_grid[ix, :, iz] = 0  # through-hole in base
-    print(f"  Base after holes: {int(base_grid.sum()) / 1e6:.0f}M voxels")
+    # Also drill clearance holes for cylinder screws
+    print("  Drilling cylinder screw clearance holes in base...")
+    for sx, sy, sz in cyl_screw_positions:
+        ix_min = max(0, int((sx - CYL_SCREW_CLEAR_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + CYL_SCREW_CLEAR_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - CYL_SCREW_CLEAR_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + CYL_SCREW_CLEAR_R - z_range[0]) / res) + 2)
+        for ix in range(ix_min, ix_max + 1):
+            dx = x_range[ix] - sx
+            for iz in range(iz_min, iz_max + 1):
+                dz = z_range[iz] - sz
+                if dx * dx + dz * dz <= CYL_SCREW_CLEAR_R ** 2:
+                    base_grid[ix, :, iz] = 0
+    print(f"  Base after all holes: {int(base_grid.sum()) / 1e6:.0f}M voxels")
 
     if save_grid:
         gpath = f'data/pan_body_{res}mm_grid.npz'
         print(f"\n  Saving grids to {gpath}...")
         np.savez_compressed(gpath, body=grid, base=base_grid,
+                            inner_cyl=inner_cyl_mask, outer_cyl=outer_cyl_mask,
                             x_range=x_range, y_range=y_range,
                             z_range=z_range, res=np.array([res]))
         print("  Saved.")
 
-    # Phase 10: Marching cubes — main body
-    print("\nPhase 10: Marching cubes (body)...")
-    padded = np.pad(grid, 1, mode='constant', constant_values=0)
-    del grid; gc.collect()
-    if use_sdf:
-        verts_body, faces_body = _sdf_extract(padded, res, sigma)
-    else:
-        verts_body, faces_body, _, _ = marching_cubes(
-            padded, level=0.5, spacing=(res, res, res))
-    del padded; gc.collect()
-    verts_body[:, 0] += x_range[0] - res
-    verts_body[:, 1] += y_range[0] - res
-    verts_body[:, 2] += z_range[0] - res
-    print(f"  Body: {len(verts_body)}v, {len(faces_body)}f")
-
-    # Phase 11: Marching cubes — base plate
-    print("\nPhase 11: Marching cubes (base)...")
-    padded_base = np.pad(base_grid, 1, mode='constant', constant_values=0)
-    del base_grid; gc.collect()
-    if use_sdf:
-        verts_base, faces_base = _sdf_extract(padded_base, res, sigma)
-    else:
-        verts_base, faces_base, _, _ = marching_cubes(
-            padded_base, level=0.5, spacing=(res, res, res))
-    del padded_base; gc.collect()
-    verts_base[:, 0] += x_range[0] - res
-    verts_base[:, 1] += y_range[0] - res
-    verts_base[:, 2] += z_range[0] - res
-    print(f"  Base: {len(verts_base)}v, {len(faces_base)}f")
-
-    # Phase 12: Export
+    # Phase 10: Extract meshes via marching cubes
     tag = f'_{res}mm' if res != 0.5 else ''
     if use_sdf:
         tag += '_sdf'
-    print(f"\nPhase 12: Export (pan_body{tag})...")
 
-    # Combined OBJ with named objects
-    with open(f'data/pan_body{tag}.obj', 'w') as f:
-        f.write("# Pan body + base plate\n# Units: mm\n\n")
-        f.write("o DrumBody\n")
-        for v in verts_body:
-            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
-        f.write("\n")
-        for face in faces_body:
-            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
-        f.write("\n")
-        n_body = len(verts_body)
-        f.write("o BasePlate\n")
-        for v in verts_base:
-            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
-        f.write("\n")
-        for face in faces_base:
-            f.write(f"f {face[0]+1+n_body} {face[1]+1+n_body} {face[2]+1+n_body}\n")
-    print(f"  pan_body{tag}.obj (DrumBody + BasePlate)")
+    def _extract_mesh(voxel_grid, label):
+        """Extract mesh from voxel grid via marching cubes (with optional SDF)."""
+        padded = np.pad(voxel_grid, 1, mode='constant', constant_values=0)
+        if use_sdf:
+            v, f = _sdf_extract(padded, res, sigma)
+        else:
+            v, f, _, _ = marching_cubes(padded, level=0.5, spacing=(res, res, res))
+        del padded
+        v[:, 0] += x_range[0] - res
+        v[:, 1] += y_range[0] - res
+        v[:, 2] += z_range[0] - res
+        print(f"  {label}: {len(v)}v, {len(f)}f")
+        return v, f
 
-    # Separate OBJ files for drum body and base plate
-    with open(f'data/pan_drum{tag}.obj', 'w') as f:
-        f.write("# Drum body (no base plate)\n# Units: mm\n\n")
-        f.write("o DrumBody\n")
-        for v in verts_body:
-            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
-        f.write("\n")
-        for face in faces_body:
-            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
-    print(f"  pan_drum{tag}.obj (DrumBody only)")
-
-    with open(f'data/pan_base{tag}.obj', 'w') as f:
-        f.write("# Base plate\n# Units: mm\n\n")
-        f.write("o BasePlate\n")
-        for v in verts_base:
-            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
-        f.write("\n")
-        for face in faces_base:
-            f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
-    print(f"  pan_base{tag}.obj (BasePlate only)")
-
-    # Separate STL files
     def _write_stl(path, label, verts, faces):
         with open(path, 'wb') as f:
             f.write(label.encode().ljust(80, b'\0'))
@@ -695,13 +854,111 @@ def main():
                 f.write(struct.pack('<3f', *v2))
                 f.write(struct.pack('<H', 0))
 
+    def _write_obj(path, label, verts, faces, obj_name="Mesh"):
+        with open(path, 'w') as f:
+            f.write(f"# {label}\n# Units: mm\n\n")
+            f.write(f"o {obj_name}\n")
+            for v in verts:
+                f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+            f.write("\n")
+            for face in faces:
+                f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+
+    # Phase 10a: Extract inner cylinder
+    print("\nPhase 10a: Inner cylinder mesh...")
+    inner_cyl_grid = grid.copy()
+    inner_cyl_grid[inner_cyl_mask == 0] = 0
+    verts_inner_cyl, faces_inner_cyl = _extract_mesh(inner_cyl_grid, "InnerCylinder")
+    del inner_cyl_grid; gc.collect()
+
+    # Phase 10b: Extract outer cylinder
+    print("\nPhase 10b: Outer cylinder mesh...")
+    outer_cyl_grid = grid.copy()
+    outer_cyl_grid[outer_cyl_mask == 0] = 0
+    verts_outer_cyl, faces_outer_cyl = _extract_mesh(outer_cyl_grid, "OuterCylinder")
+    del outer_cyl_grid; gc.collect()
+
+    # Phase 10c: Extract body WITHOUT cylinders
+    print("\nPhase 10c: Body mesh (without cylinders)...")
+    grid[inner_cyl_mask == 1] = 0
+    grid[outer_cyl_mask == 1] = 0
+    del inner_cyl_mask, outer_cyl_mask; gc.collect()
+    verts_body, faces_body = _extract_mesh(grid, "DrumBody")
+    del grid; gc.collect()
+
+    # Phase 10d: Extract base plate
+    print("\nPhase 10d: Base plate mesh...")
+    verts_base, faces_base = _extract_mesh(base_grid, "BasePlate")
+    del base_grid; gc.collect()
+
+    # Phase 12: Export all components
+    print(f"\nPhase 12: Export (pan_body{tag})...")
+
+    # Combined OBJ with all named objects
+    with open(f'data/pan_body{tag}.obj', 'w') as f:
+        f.write("# Pan body + cylinders + base plate\n# Units: mm\n\n")
+        vert_off = 0
+
+        f.write("o DrumBody\n")
+        for v in verts_body:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        for face in faces_body:
+            f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
+        vert_off += len(verts_body)
+
+        f.write(f"\no InnerCylinder\n")
+        for v in verts_inner_cyl:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        for face in faces_inner_cyl:
+            f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
+        vert_off += len(verts_inner_cyl)
+
+        f.write(f"\no OuterCylinder\n")
+        for v in verts_outer_cyl:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        for face in faces_outer_cyl:
+            f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
+        vert_off += len(verts_outer_cyl)
+
+        f.write(f"\no BasePlate\n")
+        for v in verts_base:
+            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
+        for face in faces_base:
+            f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
+    print(f"  pan_body{tag}.obj (DrumBody + InnerCylinder + OuterCylinder + BasePlate)")
+
+    # Separate OBJ files
+    _write_obj(f'data/pan_drum{tag}.obj', 'Drum body (no cylinders)', verts_body, faces_body, 'DrumBody')
+    print(f"  pan_drum{tag}.obj (DrumBody only)")
+
+    _write_obj(f'data/pan_base{tag}.obj', 'Base plate', verts_base, faces_base, 'BasePlate')
+    print(f"  pan_base{tag}.obj (BasePlate only)")
+
+    _write_obj(f'data/pan_inner_cylinder{tag}.obj', 'Inner structural cylinder',
+               verts_inner_cyl, faces_inner_cyl, 'InnerCylinder')
+    print(f"  pan_inner_cylinder{tag}.obj")
+
+    _write_obj(f'data/pan_outer_cylinder{tag}.obj', 'Outer structural cylinder',
+               verts_outer_cyl, faces_outer_cyl, 'OuterCylinder')
+    print(f"  pan_outer_cylinder{tag}.obj")
+
+    # Separate STL files
     _write_stl(f'data/pan_drum{tag}.stl', 'STL drum body', verts_body, faces_body)
     print(f"  pan_drum{tag}.stl ({len(faces_body)} tri)")
 
     _write_stl(f'data/pan_base{tag}.stl', 'STL base plate', verts_base, faces_base)
     print(f"  pan_base{tag}.stl ({len(faces_base)} tri)")
 
-    # Combined STL (for convenience)
+    _write_stl(f'data/pan_inner_cylinder{tag}.stl', 'STL inner cylinder',
+               verts_inner_cyl, faces_inner_cyl)
+    print(f"  pan_inner_cylinder{tag}.stl ({len(faces_inner_cyl)} tri)")
+
+    _write_stl(f'data/pan_outer_cylinder{tag}.stl', 'STL outer cylinder',
+               verts_outer_cyl, faces_outer_cyl)
+    print(f"  pan_outer_cylinder{tag}.stl ({len(faces_outer_cyl)} tri)")
+
+    # Combined complete STL
+    n_body = len(verts_body)
     all_verts = np.vstack([verts_body, verts_base])
     all_faces = list(faces_body) + [[f[0] + n_body, f[1] + n_body, f[2] + n_body]
                                      for f in faces_base]
