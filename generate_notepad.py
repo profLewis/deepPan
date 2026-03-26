@@ -1360,7 +1360,9 @@ def generate_notepad(note_index, obj_path, output_dir,
             tgt_flat_n = tgt_flat / np.linalg.norm(tgt_flat)
             cos_a = np.clip(np.dot(src_flat_n, tgt_flat_n), -1, 1)
             sin_a = np.dot(np.cross(src_flat_n, tgt_flat_n), drum_axis)
-            rot_angle = math.atan2(sin_a, cos_a)
+            rot_angle_raw = math.atan2(sin_a, cos_a)
+            # Snap to nearest 30° (outer pads are evenly spaced at 30°)
+            rot_angle = round(rot_angle_raw / math.radians(30)) * math.radians(30)
 
             # Rodrigues rotation around drum_axis
             c_r, s_r = math.cos(rot_angle), math.sin(rot_angle)
