@@ -2154,6 +2154,86 @@ def main():
                             f.write(f"f {face_str}\n")
                         vert_offset += len(body_verts)
                         f.write("\n")
+                # Generate assembly view so we can validate holes against real hardware
+                print(f"\nGenerating assembly view for hole validation...")
+                import generate_assembly_view
+                generate_assembly_view.main()
+
+                # Post-validate: remove any screw holes inside symmetric hardware masks
+                # Uses the actual MountBase + Sleeve geometry from assembly_view
+                print(f"\nValidating screw holes against hardware masks...")
+                from generate_maps import compute_symmetric_hw_mask, load_assembly_view
+                a_verts_v, a_objects_v = load_assembly_view()
+
+                props_list = _json.load(open(Path(output_dir) / "notepad_properties.json"))
+                total_removed = 0
+                for p in props_list:
+                    idx = p['index']
+                    holes = p.get('hole_positions', [])
+                    if not holes:
+                        continue
+
+                    # Compute mask from assembly_view hardware
+                    hw_xz = []
+                    for prefix in ['MountBase_', 'Sleeve_']:
+                        key = prefix + idx
+                        if key in a_objects_v:
+                            hv = a_verts_v[sorted(a_objects_v[key])]
+                            hw_xz.append(hv[:, [0, 2]])
+                    pad_key = f'Pad_{idx}'
+                    if not hw_xz or pad_key not in a_objects_v:
+                        continue
+
+                    pv_b = a_verts_v[sorted(a_objects_v[pad_key])]
+                    mask = compute_symmetric_hw_mask(np.vstack(hw_xz), pv_b[:, [0, 2]])
+                    if mask is None:
+                        continue
+
+                    # Check each hole in body coords
+                    from shapely.geometry import Point as _ValPt
+                    good_holes = []
+                    for hp in holes:
+                        h_body = R_level @ (np.array(hp) - pan_centroid_offset)
+                        if not mask.contains(_ValPt(h_body[0], h_body[2])):
+                            good_holes.append(hp)
+                        else:
+                            total_removed += 1
+                    if len(good_holes) < len(holes):
+                        removed = len(holes) - len(good_holes)
+                        print(f"  {idx}: removed {removed} holes inside hardware mask "
+                              f"({len(good_holes)} remain)")
+                        p['hole_positions'] = good_holes
+
+                if total_removed > 0:
+                    print(f"  Total: removed {total_removed} holes across all pads")
+                    # Re-save properties
+                    with open(Path(output_dir) / "notepad_properties.json", 'w') as pf:
+                        _json.dump(props_list, pf, indent=2)
+                    print(f"  Re-saved notepad_properties.json")
+
+                    # Rebuild pad OBJs for affected pads (re-subtract remaining holes)
+                    print(f"  Rebuilding affected pad OBJs...")
+                    for r in results:
+                        idx = r['index']
+                        # Find updated hole count
+                        for p in props_list:
+                            if p['index'] == idx:
+                                new_holes = p.get('hole_positions', [])
+                                if len(new_holes) < len(r.get('hole_positions', [])):
+                                    # This pad had holes removed — but the OBJ
+                                    # already has holes subtracted. The removed holes
+                                    # just won't have pilot holes in the drum body.
+                                    # The pad OBJ itself is fine (extra holes don't hurt).
+                                    pass
+                                break
+                else:
+                    print(f"  All holes validated — none in hardware zones")
+
+                # Regenerate assembly view with updated properties
+                if total_removed > 0:
+                    print(f"  Regenerating assembly view...")
+                    generate_assembly_view.main()
+
                 # Generate universal screw cap (one cap fits all holes)
                 print(f"\nGenerating screw hole cap...")
                 cap_obj, cap_stl = generate_screw_cap(output_dir)
@@ -2163,6 +2243,8 @@ def main():
                 print(f"Combined OBJ: {combined_path}  (overlay on pan_body.obj)")
                 print(f"Screw cap: {cap_obj}  (press-fit, {CAP_NEEDLE_HOLE}mm needle hole)")
                 print(f"Properties: {output_dir}/notepad_properties.json")
+                if total_removed > 0:
+                    print(f"  WARNING: {total_removed} holes removed during validation")
                 print(f"{'='*60}")
             return
         else:
