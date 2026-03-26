@@ -1503,40 +1503,6 @@ def generate_notepad(note_index, obj_path, output_dir,
 
     print(f"  Mount position: ({pan_surface_centroid[0]:.2f}, {pan_surface_centroid[1]:.2f}, {pan_surface_centroid[2]:.2f})")
 
-    # Safety check: if boss is too close to pad boundary, shift it inward.
-    # The boss outer radius must fit within the pad boundary with margin.
-    if ring in ('inner', 'central'):
-        boss_outer_r = mount_inner_dia / 2 + mount_wall
-        BOSS_MARGIN = 1.0  # mm clearance between boss and pad edge
-        be_check = find_boundary_edges(pan_faces)
-        loops_check = find_all_boundary_loops(be_check)
-        if loops_check:
-            bvi_check = max(loops_check, key=len)
-            bpts_check = pan_verts[bvi_check]
-            # Project to tangent plane for distance check
-            n_hat_c = pan_normal / np.linalg.norm(pan_normal)
-            dists_to_boss = []
-            for bp in bpts_check:
-                diff_b = bp - pan_surface_centroid
-                diff_b = diff_b - np.dot(diff_b, n_hat_c) * n_hat_c  # tangent plane
-                dists_to_boss.append(np.linalg.norm(diff_b))
-            min_dist = min(dists_to_boss)
-            needed = boss_outer_r + BOSS_MARGIN
-            if min_dist < needed:
-                # Find the direction of the nearest boundary point
-                nearest_idx = int(np.argmin(dists_to_boss))
-                nearest_pt = bpts_check[nearest_idx]
-                to_nearest = nearest_pt - pan_surface_centroid
-                to_nearest = to_nearest - np.dot(to_nearest, n_hat_c) * n_hat_c
-                to_nearest_len = np.linalg.norm(to_nearest)
-                if to_nearest_len > 1e-6:
-                    # Shift boss AWAY from nearest boundary
-                    shift_dist = needed - min_dist
-                    shift_dir = -to_nearest / to_nearest_len
-                    pan_surface_centroid = pan_surface_centroid + shift_dir * shift_dist
-                    pan_interior_centroid = pan_surface_centroid - pan_normal * (pan_thickness / 2.0)
-                    print(f"  ** Boss shifted {shift_dist:.1f}mm inward (was {min_dist:.1f}mm from edge, need {needed:.1f}mm)")
-
     # For inner ring pads, extend the pad surface outward by adding a
     # contiguous flange ring around the boundary.  This creates a single
     # surface with no gap (unlike attaching a separate groove mesh).
