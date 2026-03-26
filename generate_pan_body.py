@@ -718,7 +718,6 @@ def main():
     # Profile from pocket floor downward:
     #   plug bore (CSINK_TOP_R, CSINK_PLUG_DEPTH) → taper (CSINK_TOP_R→PILOT_R, CSINK_TAPER_DEPTH) → pilot (PILOT_R)
     print("\nPhase 8: Pad screw holes + countersink + plug bore...")
-    import math
     total_csink = CSINK_PLUG_DEPTH + CSINK_TAPER_DEPTH
     for hx, hy, hz in screw_holes:
         ix_min = max(0, int((hx - CSINK_TOP_R - x_range[0]) / res) - 1)
@@ -754,7 +753,6 @@ def main():
     # M3 pilot holes in drum body (tapped), clearance holes in base plate
     # Arranged around the perimeter
     print("\nPhase 8b: Base attachment screws...")
-    import math
     base_screw_r = drum_r - BASE_SCREW_INSET
     base_screw_positions = []
     for si in range(BASE_SCREW_N):
