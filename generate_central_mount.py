@@ -466,6 +466,151 @@ def generate_central_mount():
     return all_verts, all_faces
 
 
+def generate_pcb_prototype():
+    """Generate a 20x20mm PCB prototype with short pins in M2 screw holes.
+
+    The PCB sits against the vertical plate of the push-cap mount.
+    Oriented in the same local frame as generate_central_mount():
+    Z=0 at pad side, -Z downward.
+
+    Returns (vertices, faces).
+    """
+    PCB_SIZE = 20.0
+    PCB_THICK = 1.6       # standard PCB thickness
+    PIN_HEIGHT = 2.0
+    PIN_R = 0.9           # slightly under M2 (1.0mm) for fit
+    PIN_SEGS = 8
+
+    verts = []
+    faces = []
+
+    # PCB board — rectangular slab centred on the plate position
+    # The plate is oriented in the YZ plane with normal along X.
+    # PCB sits against the plate front face (+X side).
+    plate_front_x = PLATE_X_OFFSET + PLATE_THICKNESS / 2
+    pcb_x0 = plate_front_x
+    pcb_x1 = plate_front_x + PCB_THICK
+
+    half = PCB_SIZE / 2
+    pcb_y0 = PLATE_Y_OFFSET - half
+    pcb_y1 = PLATE_Y_OFFSET + half
+    pcb_z0 = PLATE_Z_TOP - PLATE_HEIGHT / 2 - half
+    pcb_z1 = PLATE_Z_TOP - PLATE_HEIGHT / 2 + half
+
+    # 8 corners of the rectangular slab
+    corners = [
+        [pcb_x0, pcb_y0, pcb_z0], [pcb_x1, pcb_y0, pcb_z0],
+        [pcb_x1, pcb_y1, pcb_z0], [pcb_x0, pcb_y1, pcb_z0],
+        [pcb_x0, pcb_y0, pcb_z1], [pcb_x1, pcb_y0, pcb_z1],
+        [pcb_x1, pcb_y1, pcb_z1], [pcb_x0, pcb_y1, pcb_z1],
+    ]
+    base = len(verts)
+    verts.extend(corners)
+    # 6 faces of the box (2 tris each)
+    box_faces = [
+        [0,2,1],[0,3,2],  # -Z face
+        [4,5,6],[4,6,7],  # +Z face
+        [0,1,5],[0,5,4],  # -Y face
+        [2,3,7],[2,7,6],  # +Y face
+        [0,4,7],[0,7,3],  # -X face
+        [1,2,6],[1,6,5],  # +X face
+    ]
+    faces.extend([[base + i for i in f] for f in box_faces])
+
+    # M2 mounting pins at 4 corners on 16mm grid
+    grid_half = PCB_HOLE_GRID / 2
+    hole_centres_yz = [
+        (PLATE_Y_OFFSET - grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 - grid_half),
+        (PLATE_Y_OFFSET + grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 - grid_half),
+        (PLATE_Y_OFFSET + grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 + grid_half),
+        (PLATE_Y_OFFSET - grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 + grid_half),
+    ]
+    for hy, hz in hole_centres_yz:
+        # Pin cylinder protruding in -X direction (into the plate holes)
+        pin_base = len(verts)
+        # Top ring at plate front
+        for i in range(PIN_SEGS):
+            a = 2 * math.pi * i / PIN_SEGS
+            verts.append([pcb_x0, hy + PIN_R * math.cos(a), hz + PIN_R * math.sin(a)])
+        # Bottom ring (into plate)
+        for i in range(PIN_SEGS):
+            a = 2 * math.pi * i / PIN_SEGS
+            verts.append([pcb_x0 - PIN_HEIGHT, hy + PIN_R * math.cos(a), hz + PIN_R * math.sin(a)])
+        # Top centre and bottom centre
+        top_c = len(verts)
+        verts.append([pcb_x0, hy, hz])
+        bot_c = len(verts)
+        verts.append([pcb_x0 - PIN_HEIGHT, hy, hz])
+        # Faces
+        for i in range(PIN_SEGS):
+            j = (i + 1) % PIN_SEGS
+            # Side
+            faces.append([pin_base + i, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
+            faces.append([pin_base + i, pin_base + PIN_SEGS + j, pin_base + j])
+            # Top cap
+            faces.append([top_c, pin_base + j, pin_base + i])
+            # Bottom cap
+            faces.append([bot_c, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
+
+    return np.array(verts, dtype=float), faces
+
+
+def generate_bounding_cylinder(tolerance=0.5):
+    """Generate a vertical bounding cylinder around the push-cap mechanism.
+
+    The cylinder encloses the cap + boss + grip tabs + PCB plate, with a
+    small tolerance for printing clearance.  No end caps (open cylinder).
+
+    Oriented in the same local frame: Z=0 at pad side, -Z downward.
+
+    Returns (vertices, faces, outer_radius, z_top, z_bot).
+    """
+    # Compute the bounding radius from all mechanism components
+    cap_r = CAP_OUTER_DIAMETER / 2 + CAP_THREAD_DEPTH
+    grip_r = CAP_OUTER_DIAMETER / 2 + GRIP_LENGTH
+    # The plate extends in Y from the plate back to plate front, and in X
+    # Account for the boss (BOSS_INNER_DIAMETER/2 + CENTRAL_MOUNT_WALL_THICKNESS)
+    from generate_notepad import CENTRAL_MOUNT_WALL_THICKNESS
+    boss_r = BOSS_INNER_DIAMETER / 2 + CENTRAL_MOUNT_WALL_THICKNESS
+
+    # The bounding cylinder needs to clear the boss + cap + grips + plate
+    # The plate offset means it's not concentric — use the maximum extent
+    plate_max_r = math.sqrt(
+        max(abs(PLATE_X_OFFSET - PLATE_THICKNESS / 2),
+            abs(PLATE_X_OFFSET + PLATE_THICKNESS / 2)) ** 2 +
+        max(abs(PLATE_Y_OFFSET - PLATE_WIDTH / 2),
+            abs(PLATE_Y_OFFSET + PLATE_WIDTH / 2)) ** 2
+    )
+    outer_r = max(cap_r, grip_r, boss_r, plate_max_r) + tolerance
+
+    z_top = 1.0   # slightly above cap top (boss protrudes above)
+    z_bot = PLATE_Z_TOP - PLATE_HEIGHT - 2.0  # below PCB plate
+
+    # Generate open cylinder (wall only, no end caps)
+    S = SEGMENTS
+    verts = []
+    faces_out = []
+
+    # Top ring
+    r0 = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([outer_r * math.cos(a), outer_r * math.sin(a), z_top])
+    # Bottom ring
+    r1 = len(verts)
+    for i in range(S):
+        a = 2 * math.pi * i / S
+        verts.append([outer_r * math.cos(a), outer_r * math.sin(a), z_bot])
+
+    # Side faces (quads as 2 triangles)
+    for i in range(S):
+        j = (i + 1) % S
+        faces_out.append([r0 + i, r1 + i, r1 + j])
+        faces_out.append([r0 + i, r1 + j, r0 + j])
+
+    return np.array(verts, dtype=float), faces_out, outer_r, z_top, z_bot
+
+
 def main():
     from generate_notepad import write_obj, write_stl
 
@@ -484,6 +629,20 @@ def main():
     out_dir.mkdir(exist_ok=True)
     write_obj(out_dir / "central_push_cap.obj", verts, faces, "CentralPushCap")
     write_stl(out_dir / "central_push_cap.stl", verts, faces, "CentralPushCap")
+
+    # PCB prototype
+    print("\nGenerating PCB prototype (20x20mm)...")
+    pcb_v, pcb_f = generate_pcb_prototype()
+    print(f"  PCB: {len(pcb_v)}v, {len(pcb_f)}f")
+    write_obj(out_dir / "pcb_prototype.obj", pcb_v, pcb_f, "PCBPrototype")
+    write_stl(out_dir / "pcb_prototype.stl", pcb_v, pcb_f, "PCBPrototype")
+
+    # Bounding cylinder
+    print("\nGenerating bounding cylinder...")
+    bc_v, bc_f, bc_r, bc_zt, bc_zb = generate_bounding_cylinder()
+    print(f"  R={bc_r:.1f}mm, Z=[{bc_zb:.1f}, {bc_zt:.1f}]mm")
+    print(f"  {len(bc_v)}v, {len(bc_f)}f")
+    write_obj(out_dir / "bounding_cylinder.obj", bc_v, bc_f, "BoundingCylinder")
 
 
 if __name__ == "__main__":

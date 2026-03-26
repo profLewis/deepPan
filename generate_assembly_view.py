@@ -25,7 +25,9 @@ from generate_notepad import (
 from generate_mount_base import generate_cylinder as generate_large_mount_base
 from generate_mount_base import generate_pcb_mount as generate_large_pcb_mount
 from generate_outer_sleeve import generate_sleeve as generate_large_sleeve
-from generate_central_mount import generate_central_mount
+from generate_central_mount import (
+    generate_central_mount, generate_bounding_cylinder, generate_pcb_prototype,
+)
 
 
 OBJ_PATH = "data/Tenor Pan only.obj"
@@ -68,6 +70,10 @@ def main():
 
     print("Generating central/inner push-cap mount...")
     pushcap_v, pushcap_f = generate_central_mount()
+
+    print("Generating bounding cylinder + PCB prototype...")
+    bc_v, bc_f, bc_r, bc_zt, bc_zb = generate_bounding_cylinder()
+    pcb_v, pcb_f = generate_pcb_prototype()
 
     # Per-ring mount parameters
     ring_params = {
@@ -255,11 +261,114 @@ def main():
                     out.write(f"f {' '.join(str(i + 1 + vert_offset) for i in face)}\n")
                 vert_offset += len(body_sleeve_verts)
 
+            # Write bounding cylinder + PCB prototype (central/inner only)
+            if ring in ('central', 'inner'):
+                body_bc_verts = place_component(bc_v, z_off)
+                out.write(f"o BoundingCylinder_{note_index}\n")
+                for v in body_bc_verts:
+                    out.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+                for face in bc_f:
+                    out.write(f"f {' '.join(str(i + 1 + vert_offset) for i in face)}\n")
+                vert_offset += len(body_bc_verts)
+
+                body_pcb_verts = place_component(pcb_v, z_off)
+                out.write(f"o PCBPrototype_{note_index}\n")
+                for v in body_pcb_verts:
+                    out.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+                for face in pcb_f:
+                    out.write(f"f {' '.join(str(i + 1 + vert_offset) for i in face)}\n")
+                vert_offset += len(body_pcb_verts)
+
             out.write("\n")
+
+    # Also write bounding cylinders to a separate file for use in pan body carving
+    bc_output = "data/notepads/bounding_cylinders.obj"
+    print(f"\nWriting bounding cylinders to {bc_output}...")
+    with open(bc_output, 'w') as bcf:
+        bcf.write("# Bounding cylinders for central/inner ring mechanisms\n")
+        bcf.write("# Body coords (matches assembly_view.obj)\n\n")
+        bc_vert_offset = 0
+        # Re-iterate to place bounding cylinders
+        for note_index in sorted(NOTE_BY_INDEX.keys()):
+            info = NOTE_BY_INDEX[note_index]
+            ring = info['ring']
+            if ring not in ('central', 'inner'):
+                continue
+
+            pan_obj = info['pan_object']
+            grove_obj = info['grove_object']
+            rp = ring_params[ring]
+
+            pan_verts_bc, pan_faces_bc = extract_object_mesh(objects, pan_obj, all_vertices)
+            grove_verts_bc, grove_faces_bc = extract_object_mesh(objects, grove_obj, all_vertices)
+            pan_verts_bc, grove_verts_bc, _, _ = check_and_scale_pad(
+                pan_verts_bc, grove_verts_bc, min_size=rp['min_pad_size'])
+
+            pan_normal_bc = compute_surface_normal(pan_verts_bc, pan_faces_bc)
+            _, pan_sc_bc = compute_interior_centroid(
+                pan_verts_bc, pan_faces_bc, pan_normal_bc, PAN_THICKNESS, 0)
+
+            surface_offset_bc = compute_cylinder_surface_offset(
+                pan_verts_bc, pan_sc_bc, pan_normal_bc, rp['cyl_outer_r'])
+            mount_origin_bc = pan_sc_bc.copy()
+            if surface_offset_bc < 0:
+                mount_origin_bc = mount_origin_bc + pan_normal_bc * surface_offset_bc
+
+            # Recompute target_tangent for central/inner
+            n_hat_bc = pan_normal_bc / np.linalg.norm(pan_normal_bc)
+            if abs(n_hat_bc[0]) < 0.9:
+                xl_bc = np.cross(n_hat_bc, [1, 0, 0])
+            else:
+                xl_bc = np.cross(n_hat_bc, [0, 1, 0])
+            xl_bc /= np.linalg.norm(xl_bc)
+            yl_bc = np.cross(n_hat_bc, xl_bc)
+            rel_bc = pan_verts_bc - pan_sc_bc
+            lx_bc, ly_bc = rel_bc @ xl_bc, rel_bc @ yl_bc
+            cov_bc = np.cov(np.column_stack([lx_bc, ly_bc]).T)
+            vals_bc, vecs_bc = np.linalg.eigh(cov_bc)
+            long_2d_bc = vecs_bc[:, np.argmax(vals_bc)]
+            tt_bc = long_2d_bc[0] * xl_bc + long_2d_bc[1] * yl_bc
+            tt_len_bc = np.linalg.norm(tt_bc)
+            tt_bc = tt_bc / tt_len_bc if tt_len_bc > 1e-6 else None
+
+            # Place bounding cylinder
+            def place_bc(comp_verts):
+                v = comp_verts.copy()
+                z_off_bc = -rp['depth']
+                v[:, 2] += z_off_bc
+                transformed = transform_cylinder_to_normal(v, mount_origin_bc, pan_normal_bc)
+                if tt_bc is not None:
+                    local_x = transform_cylinder_to_normal(
+                        np.array([[1, 0, 0]]), np.zeros(3), pan_normal_bc)[0]
+                    local_x = local_x - np.dot(local_x, pan_normal_bc) * pan_normal_bc
+                    lx_len = np.linalg.norm(local_x)
+                    if lx_len > 1e-6:
+                        local_x = local_x / lx_len
+                        cos_a = np.clip(np.dot(local_x, tt_bc), -1, 1)
+                        sin_a = np.dot(np.cross(local_x, tt_bc), pan_normal_bc)
+                        angle = math.atan2(sin_a, cos_a)
+                        c, s = math.cos(angle), math.sin(angle)
+                        n = pan_normal_bc / np.linalg.norm(pan_normal_bc)
+                        centered = transformed - mount_origin_bc
+                        rotated = (centered * c +
+                                   np.cross(n, centered) * s +
+                                   n * np.dot(centered, n).reshape(-1, 1) * (1 - c))
+                        transformed = rotated + mount_origin_bc
+                return to_body_coords(transformed, pan_centroid_offset, R_level)
+
+            body_bc = place_bc(bc_v)
+            bcf.write(f"o BoundingCylinder_{note_index}\n")
+            for v in body_bc:
+                bcf.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+            for face in bc_f:
+                bcf.write(f"f {' '.join(str(i + 1 + bc_vert_offset) for i in face)}\n")
+            bc_vert_offset += len(body_bc)
+
+    print(f"  {bc_vert_offset // len(bc_v)} bounding cylinders written")
 
     print(f"\nAssembly view saved: {OUTPUT_PATH}")
     print(f"  Load alongside pan_body.obj in Blender")
-    print(f"  Total objects: {len(NOTE_BY_INDEX) * 3} (29 pads + 29 bases + 29 sleeves)")
+    print(f"  Includes: pads, mounts, sleeves, bounding cylinders, PCB prototypes")
 
 
 if __name__ == "__main__":
