@@ -46,6 +46,12 @@ POCKET_TOLERANCE = 1.0         # mm extra around pad footprint for fit
 HW_BUFFER = 2.5                # mm clearance around hardware
 PILOT_R = 1.0                  # mm — M2 pilot hole radius (2mm dia)
 PILOT_DEPTH = 5.0              # mm — visible from pocket floor
+
+# M2 flat-head countersink at pocket floor (DIN 965, 90° included angle)
+# Head dia 3.8mm + 0.2mm clearance = 4.0mm
+CSINK_PAD_TOP_R = 2.0         # mm — countersink mouth radius (4.0mm dia)
+CSINK_PAD_DEPTH = 1.0         # mm — cone depth (top_r - pilot_r for 90°)
+
 BASE_THICKNESS = 10.0          # mm — base plate
 VOID_INSET = 15.0              # mm from drum edge
 VOID_CLEARANCE = 20.0          # mm below underside of pan surface
@@ -61,6 +67,11 @@ BASE_SCREW_INSET = 12.0        # mm from drum outer edge
 BASE_SCREW_PILOT_R = 1.25      # mm — M3 tapped pilot hole radius
 BASE_SCREW_CLEAR_R = 1.7       # mm — M3 clearance in base plate
 BASE_SCREW_DEPTH = 8.0         # mm — pilot hole depth into drum body
+
+# M3 flat-head countersink at base plate bottom (DIN 965, 90° included angle)
+# Head dia 5.5mm + 0.5mm clearance = 6.0mm
+CSINK_BASE_TOP_R = 3.0        # mm — countersink mouth radius (6.0mm dia)
+CSINK_BASE_DEPTH = CSINK_BASE_TOP_R - BASE_SCREW_CLEAR_R  # 1.3mm (90° cone)
 
 
 def _sdf_extract(padded, res, sigma):
@@ -498,18 +509,15 @@ def main():
     print(f"  {n_after / 1e6:.0f}M voxels")
 
     # Phase 8: Pad screw pilot holes (M2, from pocket floor downward)
-    # The screw goes through the pad (clearance hole) and threads into
-    # the drum body below the pocket floor. The pilot hole must be
-    # visible from above (starts at the pocket floor, goes PILOT_DEPTH down).
-    print("\nPhase 8: Pad screw holes...")
+    # Cylindrical pilot hole + 90° countersink cone at pocket floor so
+    # an M2 flat-head screw can sit flush.
+    print("\nPhase 8: Pad screw holes + countersinks...")
+    import math
     for hx, hy, hz in screw_holes:
-        ix_min = max(0, int((hx - PILOT_R - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((hx + PILOT_R - x_range[0]) / res) + 2)
-        iz_min = max(0, int((hz - PILOT_R - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((hz + PILOT_R - z_range[0]) / res) + 2)
-        # hy is the surface Y at the screw position.
-        # The pocket floor is at hy - POCKET_DEPTH.
-        # The pilot hole goes from pocket floor down PILOT_DEPTH further.
+        ix_min = max(0, int((hx - CSINK_PAD_TOP_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((hx + CSINK_PAD_TOP_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((hz - CSINK_PAD_TOP_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((hz + CSINK_PAD_TOP_R - z_range[0]) / res) + 2)
         pocket_floor = hy - POCKET_DEPTH
         iy_top = int((pocket_floor - y_range[0]) / res) + 1
         iy_bot = max(0, int((pocket_floor - PILOT_DEPTH - y_range[0]) / res))
@@ -517,15 +525,22 @@ def main():
             dx = x_range[ix] - hx
             for iz in range(iz_min, iz_max + 1):
                 dz = z_range[iz] - hz
-                if dx * dx + dz * dz <= PILOT_R * PILOT_R:
+                r_sq = dx * dx + dz * dz
+                if r_sq <= PILOT_R * PILOT_R:
+                    # Cylindrical pilot hole
                     grid[ix, iy_bot:iy_top, iz] = 0
-    print(f"  {len(screw_holes)} pad screw holes (2mm dia, {PILOT_DEPTH}mm deep)")
+                elif r_sq <= CSINK_PAD_TOP_R * CSINK_PAD_TOP_R:
+                    # 90° countersink cone at pocket floor
+                    r = math.sqrt(r_sq)
+                    max_depth = CSINK_PAD_DEPTH * (CSINK_PAD_TOP_R - r) / (CSINK_PAD_TOP_R - PILOT_R)
+                    iy_cone_bot = max(iy_bot, int((pocket_floor - max_depth - y_range[0]) / res))
+                    grid[ix, iy_cone_bot:iy_top, iz] = 0
+    print(f"  {len(screw_holes)} pad screw holes (2mm pilot + 4mm countersink, {PILOT_DEPTH}mm deep)")
 
     # Phase 8b: Base attachment screw holes
     # M3 pilot holes in drum body (tapped), clearance holes in base plate
     # Arranged around the perimeter
     print("\nPhase 8b: Base attachment screws...")
-    import math
     base_screw_r = drum_r - BASE_SCREW_INSET
     base_screw_positions = []
     for si in range(BASE_SCREW_N):
@@ -563,20 +578,29 @@ def main():
           f"{int(base_grid.sum()) / 1e6:.0f}M voxels")
     print(f"  Body without base: {int(grid.sum()) / 1e6:.0f}M voxels")
 
-    # Drill M3 clearance holes through base plate for attachment screws
-    print("  Drilling base clearance holes...")
+    # Drill M3 clearance holes + countersink through base plate
+    print("  Drilling base clearance holes + countersinks...")
+    iy_plate_bottom = max(0, int((y_min - y_range[0]) / res))
     for sx, sy, sz in base_screw_positions:
-        ix_min = max(0, int((sx - BASE_SCREW_CLEAR_R - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((sx + BASE_SCREW_CLEAR_R - x_range[0]) / res) + 2)
-        iz_min = max(0, int((sz - BASE_SCREW_CLEAR_R - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((sz + BASE_SCREW_CLEAR_R - z_range[0]) / res) + 2)
+        ix_min = max(0, int((sx - CSINK_BASE_TOP_R - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((sx + CSINK_BASE_TOP_R - x_range[0]) / res) + 2)
+        iz_min = max(0, int((sz - CSINK_BASE_TOP_R - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((sz + CSINK_BASE_TOP_R - z_range[0]) / res) + 2)
         for ix in range(ix_min, ix_max + 1):
             dx = x_range[ix] - sx
             for iz in range(iz_min, iz_max + 1):
                 dz = z_range[iz] - sz
-                if dx * dx + dz * dz <= BASE_SCREW_CLEAR_R ** 2:
-                    base_grid[ix, :, iz] = 0  # through-hole in base
-    print(f"  Base after holes: {int(base_grid.sum()) / 1e6:.0f}M voxels")
+                r_sq = dx * dx + dz * dz
+                if r_sq <= BASE_SCREW_CLEAR_R ** 2:
+                    # Cylindrical clearance hole — full through
+                    base_grid[ix, :, iz] = 0
+                elif r_sq <= CSINK_BASE_TOP_R ** 2:
+                    # 90° countersink cone at base plate bottom
+                    r = math.sqrt(r_sq)
+                    max_height = CSINK_BASE_DEPTH * (CSINK_BASE_TOP_R - r) / (CSINK_BASE_TOP_R - BASE_SCREW_CLEAR_R)
+                    iy_cone_top = min(base_grid.shape[1], iy_plate_bottom + int(max_height / res) + 1)
+                    base_grid[ix, :iy_cone_top, iz] = 0
+    print(f"  Base after holes+csink: {int(base_grid.sum()) / 1e6:.0f}M voxels")
 
     if save_grid:
         gpath = f'data/pan_body_{res}mm_grid.npz'
