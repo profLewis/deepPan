@@ -1330,6 +1330,12 @@ def generate_notepad(note_index, obj_path, output_dir,
     octave = note_info['octave']
     ring = note_info['ring']
 
+    # Init per-pad state (prevent stale data from previous iterations)
+    _inner_extended_ring = None
+    _flange_solid_v = None
+    _flange_solid_f = None
+    _groove_attached = False
+
     print(f"\n{'='*60}")
     print(f"Generating Note Pad: {note_index} ({note_name}{octave}) - {ring} ring")
     print(f"{'='*60}")
@@ -1857,7 +1863,7 @@ def generate_notepad(note_index, obj_path, output_dir,
         # Get boundary in 2D tangent plane
         # For inner pads with flange, use the extended ring as the boundary
         # For central pads with groove attached, use the groove outer boundary
-        if ring == 'inner' and '_inner_extended_ring' in dir() and _inner_extended_ring is not None:
+        if ring == 'inner' and _inner_extended_ring is not None:
             bpts = _inner_extended_ring
             _have_boundary = True
         elif ring == 'central' and _groove_attached:
@@ -1937,7 +1943,70 @@ def generate_notepad(note_index, obj_path, output_dir,
                     pt_3d = pan_surface_centroid + gx * _xl + gy * _yl
                     hole_positions.append(pt_3d)
                 sep = np.linalg.norm(hole_positions[0] - hole_positions[1])
-                print(f"  Inner ring: 2 holes at opposite ends (sep={sep:.1f}mm, {len(candidates)} candidates)")
+                if sep < 5.0:
+                    # Holes too close — only keep the one furthest from hardware
+                    dists = [np.linalg.norm(h - pan_surface_centroid) for h in hole_positions]
+                    hole_positions = [hole_positions[int(np.argmax(dists))]]
+                    print(f"  Inner ring: 1 hole only (sep={sep:.1f}mm too small, {len(candidates)} candidates)")
+                else:
+                    print(f"  Inner ring: 2 holes at opposite ends (sep={sep:.1f}mm, {len(candidates)} candidates)")
+            elif ring == 'inner' and len(candidates) < 2:
+                # Not enough candidates — relax constraints and retry
+                print(f"  Inner ring: only {len(candidates)} candidates, relaxing constraints...")
+                relaxed_candidates = []
+                for gx in np.arange(x_min - 1, x_max + 1, step):
+                    for gy in np.arange(y_min - 1, y_max + 1, step):
+                        if not _point_in_polygon_2d(gx, gy, bx_2d, by_2d):
+                            continue
+                        # Relaxed edge distance (1.5mm instead of 2.2mm)
+                        n_bnd = len(bx_2d)
+                        edge_ok = True
+                        for i in range(n_bnd):
+                            j_idx = (i + 1) % n_bnd
+                            ax, ay = bx_2d[j_idx] - bx_2d[i], by_2d[j_idx] - by_2d[i]
+                            bx_, by_ = gx - bx_2d[i], gy - by_2d[i]
+                            seg_len_sq = ax * ax + ay * ay
+                            if seg_len_sq < 1e-12:
+                                d_sq = bx_ * bx_ + by_ * by_
+                            else:
+                                t = max(0, min(1, (bx_ * ax + by_ * ay) / seg_len_sq))
+                                dx, dy = bx_ - t * ax, by_ - t * ay
+                                d_sq = dx * dx + dy * dy
+                            if d_sq < 1.5 ** 2:  # relaxed
+                                edge_ok = False
+                                break
+                        if not edge_ok:
+                            continue
+                        if _hw_mask.contains(_ScrewPt(gx, gy)):
+                            continue
+                        hw_dist = math.sqrt(gx * gx + gy * gy)
+                        relaxed_candidates.append((gx, gy, hw_dist))
+                if len(relaxed_candidates) >= 2:
+                    cand_arr = np.array([(c[0], c[1]) for c in relaxed_candidates])
+                    cand_mean = cand_arr.mean(axis=0)
+                    cand_centered = cand_arr - cand_mean
+                    cov = cand_centered.T @ cand_centered
+                    eigvals, eigvecs = np.linalg.eigh(cov)
+                    long_ax = eigvecs[:, 1]
+                    projections = cand_centered @ long_ax
+                    idx_pos = int(np.argmax(projections))
+                    idx_neg = int(np.argmin(projections))
+                    hole_positions = []
+                    for ci in [idx_pos, idx_neg]:
+                        gx, gy = cand_arr[ci]
+                        pt_3d = pan_surface_centroid + gx * _xl + gy * _yl
+                        hole_positions.append(pt_3d)
+                    sep = np.linalg.norm(hole_positions[0] - hole_positions[1])
+                    print(f"  Inner ring: 2 holes (relaxed, sep={sep:.1f}mm, {len(relaxed_candidates)} candidates)")
+                else:
+                    # Last resort: use whatever candidates we have
+                    hole_positions = []
+                    for gx, gy, _ in (candidates + relaxed_candidates):
+                        pt_3d = pan_surface_centroid + gx * _xl + gy * _yl
+                        hole_positions.append(pt_3d)
+                        if len(hole_positions) >= MAX_HOLES:
+                            break
+                    print(f"  Inner ring: {len(hole_positions)} holes (fallback)")
             else:
                 # Central pads or fallback: greedy furthest-from-hardware
                 candidates.sort(key=lambda c: -c[2])
@@ -2058,7 +2127,7 @@ def generate_notepad(note_index, obj_path, output_dir,
 
     # Append flange solid if we have one (inner ring pads)
     # Also cut holes through the flange where needed
-    if '_flange_solid_v' in dir() and _flange_solid_v is not None:
+    if _flange_solid_v is not None:
         if hole_positions:
             print(f"  Cutting {len(hole_positions)} holes through flange...")
             _flange_solid_v, _flange_solid_f = subtract_screw_holes(
