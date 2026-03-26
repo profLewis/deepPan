@@ -1490,7 +1490,7 @@ def generate_notepad(note_index, obj_path, output_dir,
     # Nudge specific pads to fix overlaps (rotate around inner ring centroid)
     # I0 overlaps I4 — rotate I0 toward I1 by a small angle
     INNER_PAD_NUDGES = {
-        'I0': -5.0,  # degrees — negative = toward I1 (clockwise in XZ)
+        'I0': -7.0,  # degrees — negative = toward I1 (clockwise in XZ)
     }
     if note_index in INNER_PAD_NUDGES and ring == 'inner':
         _nudge_deg = INNER_PAD_NUDGES[note_index]
