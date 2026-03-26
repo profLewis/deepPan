@@ -192,7 +192,9 @@ def main():
         for p in sorted(props, key=lambda x: x['index']):
             idx = p['index']
             normal = np.array(p['normal'])
-            holes = p.get('hole_positions', [])
+            # Use all_hole_positions if available (includes holes removed by
+            # hardware mask validation), so every physical hole in the pad gets a pin
+            holes = p.get('all_hole_positions', p.get('hole_positions', []))
             if not holes:
                 continue
 
