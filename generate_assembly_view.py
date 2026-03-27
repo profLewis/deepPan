@@ -26,7 +26,7 @@ from generate_mount_base import generate_cylinder as generate_large_mount_base
 from generate_mount_base import generate_pcb_mount as generate_large_pcb_mount
 from generate_outer_sleeve import generate_sleeve as generate_large_sleeve
 from generate_central_mount import (
-    generate_central_mount, generate_bounding_cylinder, generate_pcb_prototype,
+    generate_central_mount, generate_bounding_ellipse_prism, generate_pcb_prototype,
 )
 
 
@@ -71,8 +71,8 @@ def main():
     print("Generating central/inner push-cap mount...")
     pushcap_v, pushcap_f = generate_central_mount()
 
-    print("Generating bounding cylinder + PCB prototype...")
-    bc_v, bc_f, bc_r, bc_zt, bc_zb = generate_bounding_cylinder()
+    print("Generating bounding ellipse prism + PCB prototype...")
+    bc_v, bc_f, bc_sx, bc_sy, bc_zt, bc_zb = generate_bounding_ellipse_prism(tolerance=1.5)
     pcb_v, pcb_f = generate_pcb_prototype()
 
     # Per-ring mount parameters
@@ -261,10 +261,10 @@ def main():
                     out.write(f"f {' '.join(str(i + 1 + vert_offset) for i in face)}\n")
                 vert_offset += len(body_sleeve_verts)
 
-            # Write bounding cylinder + PCB prototype (central/inner only)
+            # Write bounding ellipse + PCB prototype (central/inner only)
             if ring in ('central', 'inner'):
                 body_bc_verts = place_component(bc_v, z_off)
-                out.write(f"o BoundingCylinder_{note_index}\n")
+                out.write(f"o BoundingEllipse_{note_index}\n")
                 for v in body_bc_verts:
                     out.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
                 for face in bc_f:
@@ -281,11 +281,11 @@ def main():
 
             out.write("\n")
 
-    # Also write bounding cylinders to a separate file for use in pan body carving
-    bc_output = "data/notepads/bounding_cylinders.obj"
-    print(f"\nWriting bounding cylinders to {bc_output}...")
+    # Also write bounding ellipses to a separate file for use in pan body carving
+    bc_output = "data/notepads/bounding_ellipses.obj"
+    print(f"\nWriting bounding ellipses to {bc_output}...")
     with open(bc_output, 'w') as bcf:
-        bcf.write("# Bounding cylinders for central/inner ring mechanisms\n")
+        bcf.write("# Bounding ellipses for central/inner ring mechanisms\n")
         bcf.write("# Body coords (matches assembly_view.obj)\n\n")
         bc_vert_offset = 0
         # Re-iterate to place bounding cylinders
@@ -331,7 +331,7 @@ def main():
             tt_len_bc = np.linalg.norm(tt_bc)
             tt_bc = tt_bc / tt_len_bc if tt_len_bc > 1e-6 else None
 
-            # Place bounding cylinder
+            # Place bounding ellipse
             def place_bc(comp_verts):
                 v = comp_verts.copy()
                 z_off_bc = -rp['depth']
@@ -357,18 +357,51 @@ def main():
                 return to_body_coords(transformed, pan_centroid_offset, R_level)
 
             body_bc = place_bc(bc_v)
-            bcf.write(f"o BoundingCylinder_{note_index}\n")
+            bcf.write(f"o BoundingEllipse_{note_index}\n")
             for v in body_bc:
                 bcf.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
             for face in bc_f:
                 bcf.write(f"f {' '.join(str(i + 1 + bc_vert_offset) for i in face)}\n")
             bc_vert_offset += len(body_bc)
 
-    print(f"  {bc_vert_offset // len(bc_v)} bounding cylinders written")
+    print(f"  {bc_vert_offset // len(bc_v)} bounding ellipses written")
+
+    # Export combined STL
+    stl_path = OUTPUT_PATH.replace('.obj', '.stl')
+    print(f"\n  Exporting STL: {stl_path}...")
+    import struct
+    # Re-read the OBJ we just wrote to get all vertices/faces
+    stl_verts, stl_faces = [], []
+    with open(OUTPUT_PATH) as fin:
+        for line in fin:
+            if line.startswith('v '):
+                p = line.split()
+                stl_verts.append([float(p[1]), float(p[2]), float(p[3])])
+            elif line.startswith('f '):
+                indices = [int(tok.split('/')[0]) - 1 for tok in line.split()[1:]]
+                # Triangulate
+                for i in range(1, len(indices) - 1):
+                    stl_faces.append([indices[0], indices[i], indices[i + 1]])
+    stl_verts = np.array(stl_verts)
+    with open(stl_path, 'wb') as sf:
+        sf.write(b'Assembly view STL'.ljust(80, b'\0'))
+        sf.write(struct.pack('<I', len(stl_faces)))
+        for tri in stl_faces:
+            v0, v1, v2 = stl_verts[tri[0]], stl_verts[tri[1]], stl_verts[tri[2]]
+            n = np.cross(v1 - v0, v2 - v0)
+            nl = np.linalg.norm(n)
+            if nl > 0:
+                n /= nl
+            sf.write(struct.pack('<3f', *n))
+            sf.write(struct.pack('<3f', *v0))
+            sf.write(struct.pack('<3f', *v1))
+            sf.write(struct.pack('<3f', *v2))
+            sf.write(struct.pack('<H', 0))
+    print(f"  {len(stl_faces)} triangles")
 
     print(f"\nAssembly view saved: {OUTPUT_PATH}")
-    print(f"  Load alongside pan_body.obj in Blender")
-    print(f"  Includes: pads, mounts, sleeves, bounding cylinders, PCB prototypes")
+    print(f"  STL: {stl_path}")
+    print(f"  Includes: pads, mounts, sleeves, bounding ellipses, PCB prototypes")
 
 
 if __name__ == "__main__":
