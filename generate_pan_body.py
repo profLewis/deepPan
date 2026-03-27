@@ -277,6 +277,18 @@ def main():
             screw_holes.append((h[0], h[1], h[2]))
     print(f"  {len(screw_holes)} screw holes")
 
+    # Compute rim clip radius: inner R of outer pad top surfaces.
+    # The voxel body stops here; the rim mesh covers R > rim_clip_r.
+    rim_clip_r = float('inf')
+    for name, vis in a_objects.items():
+        if name.startswith('Pad_O'):
+            pv = a_verts[sorted(vis)]
+            y_max = float(pv[:, 1].max())
+            top = pv[pv[:, 1] > y_max - 5.0]
+            r_min = float(np.sqrt(top[:, 0]**2 + top[:, 2]**2).min())
+            rim_clip_r = min(rim_clip_r, r_min)
+    print(f"  Rim clip R = {rim_clip_r:.1f}mm (outer pad top inner edge)")
+
     # Phase 3b: Load groove top surfaces for embedding into body
     print("\nPhase 3b: Groove surfaces...")
     from pathlib import Path as PathLib
@@ -361,11 +373,15 @@ def main():
     grid_theta = np.arctan2(ZI, XI)
     surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
                               period=2 * np.pi).reshape(grid_theta.shape)
-    inside_drum = RR <= surface_r_map
-    r_min_surf = surface_r_map[inside_drum].min()
-    r_max_surf = surface_r_map[inside_drum].max()
-    print(f"  Surface R: [{r_min_surf:.1f}, {r_max_surf:.1f}]mm (was flat {drum_r:.1f})")
-    del bowl_r, bowl_theta, surface_r_map, grid_theta
+    # Clip at rim boundary: body stops at rim_clip_r, rim mesh covers beyond
+    r_boundary = np.minimum(surface_r_map, rim_clip_r)
+    inside_drum = RR <= r_boundary
+    r_min_bnd = r_boundary[inside_drum].min()
+    r_max_bnd = r_boundary[inside_drum].max()
+    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm, "
+          f"clipped at rim R={rim_clip_r:.1f}")
+    print(f"  Fill boundary: [{r_min_bnd:.1f}, {r_max_bnd:.1f}]mm")
+    del bowl_r, bowl_theta, surface_r_map, r_boundary, grid_theta
 
     height_map[np.isnan(height_map) & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
