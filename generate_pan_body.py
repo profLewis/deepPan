@@ -13,11 +13,13 @@ Coordinates match pan_surface_up.obj and assembly_view.obj (R_level, Y=drum axis
 
 Usage:
     python generate_pan_body.py [--res=0.3] [--sdf] [--sigma=0.5] [--save-grid]
+                                [--grid-only]
 
     --sdf          Use signed distance field for smooth mesh extraction
                    (eliminates staircase artifacts while preserving sharp edges)
     --sigma=X      Gaussian smoothing sigma in voxels (implies --sdf, default 0.5)
     --save-grid    Save binary grids to .npz for fast re-extraction
+    --grid-only    Save grid and skip mesh extraction (use extract_pieces.py later)
 """
 
 import numpy as np
@@ -147,6 +149,7 @@ def main():
     use_sdf = '--sdf' in sys.argv
     sigma = 0.0
     save_grid = '--save-grid' in sys.argv
+    grid_only = '--grid-only' in sys.argv  # save grid and skip extraction
     for arg in sys.argv[1:]:
         if arg.startswith('--res='):
             res = float(arg.split('=')[1])
@@ -873,14 +876,20 @@ def main():
                     base_grid[ix, :, iz] = 0
     print(f"  Base after all holes: {int(base_grid.sum()) / 1e6:.0f}M voxels")
 
-    if save_grid:
+    if save_grid or grid_only:
         gpath = f'data/pan_body_{res}mm_grid.npz'
         print(f"\n  Saving grids to {gpath}...")
         np.savez_compressed(gpath, body=grid, base=base_grid,
                             piece_xz=piece_xz, iy_top_map=iy_top_map,
+                            iy_base_top_cyl=np.array([iy_base_top_cyl]),
                             x_range=x_range, y_range=y_range,
                             z_range=z_range, res=np.array([res]))
         print("  Saved.")
+        if grid_only:
+            print("\n  --grid-only: skipping mesh extraction.")
+            print("  Run extract_pieces.py to extract meshes from the saved grid.")
+            print("\nDone!")
+            return
 
     # Phase 10: Extract meshes via marching cubes
     tag = f'_{res}mm' if res != 0.5 else ''
