@@ -69,19 +69,51 @@ def main():
     R_level = compute_leveling_rotation(obj_path)
     bowl_v = (R_level @ bowl_v.T).T
 
-    # Phase 3: Classify rim — all faces at R > DRUM_WALL_RADIUS.
-    # Includes the full cylindrical skirt, the rolled top edge, and the
-    # transition curve inward to where the playing surface / outer pads
-    # begin. The R=225mm boundary gives a clean circular inner cutoff.
-    print("\nPhase 3: Classify rim (R > 225mm)...")
-    from generate_quarter import DRUM_WALL_RADIUS
+    # Phase 3: Classify rim — include the full skirt, rolled top edge,
+    # and the transition inward up to where the outer pad tops begin.
+    # The trim circle is the inner R of the outer pad playing surfaces.
+    print("\nPhase 3: Classify rim...")
+
+    # Find inner R of outer pad top surfaces from assembly view
+    a_verts_list = []
+    a_objs = {}
+    a_cur = None
+    with open('data/notepads/assembly_view.obj') as af:
+        for line in af:
+            line = line.strip()
+            if line.startswith('v '):
+                p = line.split()
+                a_verts_list.append([float(p[1]), float(p[2]), float(p[3])])
+            elif line.startswith('o '):
+                a_cur = line[2:]
+                a_objs[a_cur] = set()
+            elif line.startswith('f ') and a_cur:
+                for p in line.split()[1:]:
+                    try:
+                        a_objs[a_cur].add(int(p.split('/')[0]) - 1)
+                    except ValueError:
+                        pass
+    a_verts_arr = np.array(a_verts_list)
+
+    # Pad top surfaces: vertices within 5mm of each pad's Y max
+    pad_top_r_min = float('inf')
+    for name, vis in a_objs.items():
+        if not name.startswith('Pad_O'):
+            continue
+        pv = a_verts_arr[sorted(vis)]
+        y_max = float(pv[:, 1].max())
+        top = pv[pv[:, 1] > y_max - 5.0]
+        r_min = float(np.sqrt(top[:, 0]**2 + top[:, 2]**2).min())
+        pad_top_r_min = min(pad_top_r_min, r_min)
+    print(f"  Outer pad top inner R = {pad_top_r_min:.1f}mm (trim circle)")
+
     dw_faces = []
     for fi, face in enumerate(bowl_f):
         fc = bowl_v[face].mean(axis=0)
         r = math.sqrt(fc[0]**2 + fc[2]**2)
-        if r > DRUM_WALL_RADIUS:
+        if r > pad_top_r_min:
             dw_faces.append(bowl_f[fi])
-    print(f"  {len(dw_faces)} rim faces (wall + rolled edge + transition)")
+    print(f"  {len(dw_faces)} rim faces (wall + rolled edge, trimmed at pad tops)")
 
     if not dw_faces:
         print("  No drum wall faces found!")
