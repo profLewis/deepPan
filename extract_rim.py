@@ -69,13 +69,18 @@ def main():
     R_level = compute_leveling_rotation(obj_path)
     bowl_v = (R_level @ bowl_v.T).T
 
-    # Phase 3: Classify drum wall
-    print("\nPhase 3: Classify drum wall...")
-    is_dw = classify_drum_wall(bowl_v, bowl_f)
-
-    # Phase 4: Extract drum wall faces + vertices
-    dw_faces = [bowl_f[fi] for fi in range(len(bowl_f)) if is_dw[fi]]
-    print(f"  {len(dw_faces)} drum wall faces")
+    # Phase 3: Classify rim — all faces at R > DRUM_WALL_RADIUS,
+    # including the rounded rim edge (which has |ny| >= 0.5 and is
+    # excluded by classify_drum_wall's steep-normal filter).
+    print("\nPhase 3: Classify rim (R > 225mm, all normals)...")
+    from generate_quarter import DRUM_WALL_RADIUS
+    dw_faces = []
+    for fi, face in enumerate(bowl_f):
+        fc = bowl_v[face].mean(axis=0)
+        r = math.sqrt(fc[0]**2 + fc[2]**2)
+        if r > DRUM_WALL_RADIUS:
+            dw_faces.append(bowl_f[fi])
+    print(f"  {len(dw_faces)} rim faces (wall + rounded edge)")
 
     if not dw_faces:
         print("  No drum wall faces found!")
