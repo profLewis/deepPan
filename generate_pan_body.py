@@ -339,7 +339,34 @@ def main():
     print("  Interpolating...")
     height_map = griddata(ps_v[:, [0, 2]], surface_y, (XI, ZI), method='linear')
     RR = np.sqrt(XI**2 + ZI**2)
-    inside_drum = RR <= drum_r
+
+    # Compute per-angle max R from ALL bowl vertices so the drum wall is
+    # thickened inward (fill stops at the actual surface, not at drum_r).
+    print("  Computing radial boundary...")
+    bowl_r = np.sqrt(bowl_v[:, 0]**2 + bowl_v[:, 2]**2)
+    bowl_theta = np.arctan2(bowl_v[:, 2], bowl_v[:, 0])
+    n_bins = 360
+    angle_bins = np.linspace(-np.pi, np.pi, n_bins + 1)
+    r_max_per_bin = np.full(n_bins, 0.0)
+    for bi in range(n_bins):
+        mask = (bowl_theta >= angle_bins[bi]) & (bowl_theta < angle_bins[bi + 1])
+        if mask.any():
+            r_max_per_bin[bi] = bowl_r[mask].max()
+    # Fill any empty bins with neighbors
+    for bi in range(n_bins):
+        if r_max_per_bin[bi] == 0:
+            r_max_per_bin[bi] = r_max_per_bin[bi - 1]
+    # Interpolate to grid columns
+    bin_centers = 0.5 * (angle_bins[:-1] + angle_bins[1:])
+    grid_theta = np.arctan2(ZI, XI)
+    surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
+                              period=2 * np.pi).reshape(grid_theta.shape)
+    inside_drum = RR <= surface_r_map
+    r_min_surf = surface_r_map[inside_drum].min()
+    r_max_surf = surface_r_map[inside_drum].max()
+    print(f"  Surface R: [{r_min_surf:.1f}, {r_max_surf:.1f}]mm (was flat {drum_r:.1f})")
+    del bowl_r, bowl_theta, surface_r_map, grid_theta
+
     height_map[np.isnan(height_map) & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
     valid = ~np.isnan(height_map) & inside_drum
