@@ -445,15 +445,16 @@ def main():
             if nl < 1e-10:
                 continue
             n = n / nl
-            # Ensure normal points inward (toward drum center)
+            # Ensure normal points inward (toward drum interior).
+            # Use a 3D interior reference point so this works for the
+            # cylindrical wall (radial), rim top (vertical), and transition.
             centroid = (v0 + v1 + v2) / 3.0
-            r_cent = math.sqrt(centroid[0]**2 + centroid[2]**2)
-            radial_dir = np.array([centroid[0], 0, centroid[2]])
-            radial_dir_n = np.linalg.norm(radial_dir)
-            if radial_dir_n > 0:
-                radial_dir /= radial_dir_n
-            # If normal points outward (same direction as radial), flip it
-            if np.dot(n, radial_dir) > 0:
+            drum_interior = np.array([0.0, (y_min + rim_y) / 2.0, 0.0])
+            to_interior = drum_interior - centroid
+            to_interior_n = np.linalg.norm(to_interior)
+            if to_interior_n > 0:
+                to_interior /= to_interior_n
+            if np.dot(n, to_interior) < 0:
                 n = -n
 
             # Bounding box of the triangle + thickness sweep
@@ -508,8 +509,14 @@ def main():
                             grid[ix, iy, iz] = 1
                             n_rim_filled += 1
 
+        # Hard cap: no voxels above rim_y (removes stray spikes from
+        # voxelization margin on top-facing rim faces)
+        iy_rim_cap = min(ny, int((rim_y - y_range[0]) / res) + 1)
+        n_capped = int(grid[:, iy_rim_cap:, :].sum())
+        grid[:, iy_rim_cap:, :] = 0
+
         print(f"  {len(rim_tris)} rim triangles, {n_rim_filled} voxels added "
-              f"({thickness}mm inward)")
+              f"({thickness}mm inward), {n_capped} above rim_y capped")
     else:
         print(f"  {rim_path} not found — run extract_rim.py first")
 
