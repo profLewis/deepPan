@@ -381,12 +381,10 @@ def main():
     del bowl_r, bowl_theta, surface_r_map, grid_theta
 
     height_map[np.isnan(height_map) & inside_drum] = rim_y
-    # Force drum wall region (R > DRUM_WALL_RADIUS) to rim_y regardless of
-    # interpolation.  The heightmap is unreliable near the drum wall edge
-    # (griddata extrapolates badly).  Phase 5a trims the top to the actual
-    # rim profile afterward.
-    from generate_quarter import DRUM_WALL_RADIUS
-    wall_region = RR > DRUM_WALL_RADIUS
+    # Force drum wall region (R > rim_clip_r) to rim_y regardless of
+    # interpolation.  The heightmap is unreliable in the drum wall but
+    # valid for the playing surface/pad area (R < rim_clip_r).
+    wall_region = RR > rim_clip_r
     height_map[wall_region & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
     valid = ~np.isnan(height_map) & inside_drum
@@ -968,7 +966,74 @@ def main():
 
     n_final = int(grid.sum())
     print(f"  {BASE_SCREW_N} base screws at R={base_screw_r:.0f}mm")
-    print(f"  Final body: {n_final / 1e6:.0f}M voxels")
+
+    # Phase 8c: Final cleanup — re-carve pad pockets and hardware holes.
+    # The wall fill and structural additions may have introduced material
+    # that protrudes into pad pockets or hardware clearance zones. Re-apply
+    # the same carving as Phases 5b + 7 to guarantee clean cavities.
+    print("\nPhase 8c: Final pad/hardware cleanup...")
+    iy_base_top_8c = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
+    n_cleanup = 0
+    for note in sorted(NOTE_BY_INDEX.keys()):
+        pd_key = f'Pad_{note}'
+        if pd_key not in a_objects:
+            continue
+        pv = a_verts[sorted(a_objects[pd_key])]
+        pad_xz = pv[:, [0, 2]]
+        pad_y_top = float(pv[:, 1].max())
+        pocket_floor_y = pad_y_top - POCKET_DEPTH - GROOVE_STEP
+        try:
+            hull = ConvexHull(pad_xz)
+            pad_poly = Polygon(pad_xz[hull.vertices])
+            pad_poly_buffered = pad_poly.buffer(POCKET_TOLERANCE)
+            if pad_poly_buffered.geom_type == 'Polygon':
+                pad_path = MplPath(np.array(pad_poly_buffered.exterior.coords))
+            else:
+                pad_path = MplPath(pad_xz[hull.vertices])
+        except Exception:
+            continue
+        bounds = pad_path.get_extents()
+        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
+        if n_ix <= 0 or n_iz <= 0:
+            continue
+        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
+                             z_range[iz_min:iz_max + 1], indexing='ij')
+        inside = pad_path.contains_points(
+            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+        iy_floor = max(0, int((pocket_floor_y - y_range[0]) / res))
+        iy_top_pad = min(ny, int((pad_y_top - y_range[0]) / res) + 2)
+        for di in range(n_ix):
+            for dj in range(n_iz):
+                if inside[di, dj]:
+                    ix_g = ix_min + di
+                    iz_g = iz_min + dj
+                    n_cleanup += int(grid[ix_g, iy_floor:iy_top_pad, iz_g].sum())
+                    grid[ix_g, iy_floor:iy_top_pad, iz_g] = 0
+    # Re-carve hardware holes (all R, no wall preservation for cleanup)
+    for note, path in hw_shapes.items():
+        bounds = path.get_extents()
+        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
+        if n_ix <= 0 or n_iz <= 0:
+            continue
+        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
+                             z_range[iz_min:iz_max + 1], indexing='ij')
+        inside = path.contains_points(
+            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+        for di in range(n_ix):
+            for dj in range(n_iz):
+                if inside[di, dj]:
+                    n_cleanup += int(grid[ix_min + di, iy_base_top_8c:, iz_min + dj].sum())
+                    grid[ix_min + di, iy_base_top_8c:, iz_min + dj] = 0
+    print(f"  Cleaned {n_cleanup} voxels")
+    print(f"  Final body: {int(grid.sum()) / 1e6:.0f}M voxels")
 
     # Phase 9: Separate base plate
     print("\nPhase 9: Separate base plate...")
