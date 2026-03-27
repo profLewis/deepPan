@@ -42,7 +42,7 @@ PAD_SHRINK = 0.3          # mm inward per edge — ensures pad fits in groove po
 
 # Mounting cylinder parameters — OUTER ring (large sensor)
 MOUNT_INNER_DIAMETER = 23.5   # Internal diameter
-MOUNT_DEPTH = 12.0            # Cylinder depth (extended for better mount engagement)
+MOUNT_DEPTH = 14.0            # Cylinder depth (extended for better mount engagement)
 MOUNT_WALL_THICKNESS = 2.5    # Wall thickness
 MOUNT_THREAD_PITCH = 2.0      # Thread pitch
 MOUNT_THREAD_DEPTH = 1.0      # Thread depth (outward from wall)
@@ -61,7 +61,7 @@ MIN_PAD_SIZE = MOUNT_OUTER_DIAMETER + 0.5  # Add 0.5mm margin
 # Mounting cylinder parameters — CENTRAL ring (Adafruit 1740: 14mm dia, 2.5mm thick)
 # Boss is sunk INTO the thickened pad body, sensor close to playing surface.
 CENTRAL_MOUNT_INNER_DIAMETER = 16.0   # 14mm sensor + 2mm clearance (plenty of room)
-CENTRAL_MOUNT_DEPTH = 10.0            # Boss bore depth
+CENTRAL_MOUNT_DEPTH = 12.0            # Boss bore depth
 
 # The pad is thickened to contain the boss. Sensor sits near the top.
 SENSOR_SKIN = 1.5                     # Material between sensor and playing surface
