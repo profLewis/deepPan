@@ -373,20 +373,25 @@ def main():
     grid_theta = np.arctan2(ZI, XI)
     surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
                               period=2 * np.pi).reshape(grid_theta.shape)
-    # Heightmap fill boundary: clipped at rim_clip_r so the drum wall
-    # area (R > rim_clip_r) is filled ONLY by the rim mesh voxelization
-    # (Phase 5a), not by the flat rim_y approximation.  This eliminates
-    # the noisy overlap between heightmap and rim at the top of the drum.
-    r_fill_limit = np.minimum(surface_r_map, rim_clip_r)
-    inside_drum = RR <= r_fill_limit
-    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm, "
-          f"fill clipped at R={rim_clip_r:.1f}")
-    del bowl_r, bowl_theta, surface_r_map, r_fill_limit, grid_theta
+    # Fill boundary: use full surface_r_map (no rim_clip_r clipping).
+    # The solid fill creates the cylindrical wall correctly (y_min to rim_y).
+    # Phase 5a will refine the TOP profile with the actual curved rim shape.
+    inside_drum = RR <= surface_r_map
+    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm")
+    del bowl_r, bowl_theta, surface_r_map, grid_theta
 
     height_map[np.isnan(height_map) & inside_drum] = rim_y
+    # Force drum wall region (R > DRUM_WALL_RADIUS) to rim_y regardless of
+    # interpolation.  The heightmap is unreliable near the drum wall edge
+    # (griddata extrapolates badly).  Phase 5a trims the top to the actual
+    # rim profile afterward.
+    from generate_quarter import DRUM_WALL_RADIUS
+    wall_region = RR > DRUM_WALL_RADIUS
+    height_map[wall_region & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
     valid = ~np.isnan(height_map) & inside_drum
     col_top[valid] = height_map[valid]
+    del wall_region
     iy_top = np.clip(((col_top - y_range[0]) / res).astype(np.int32) + 1, 0, ny)
 
     # Compute void ceiling: original surface Y - VOID_CLEARANCE per column
@@ -412,13 +417,14 @@ def main():
     n_solid = int(grid.sum())
     print(f"  {n_solid / 1e6:.0f}M voxels")
 
-    # Phase 5a: Integrate rim via smooth radial heightmap.
-    # Instead of per-triangle voxelization (which creates bumpy staircase
-    # artifacts on the cylindrical wall), build a 2D radial heightmap
-    # R_surface(theta, Y) from the rim mesh vertices and fill the grid
-    # smoothly: a voxel at (x,y,z) is filled if its radius R is between
-    # R_surface - thickness and R_surface at the corresponding (theta, y).
-    print("\nPhase 5a: Rim integration (radial heightmap)...")
+    # Phase 5a: Trim rim top to follow actual curved profile.
+    # The solid fill (Phase 5) already creates the cylindrical wall
+    # correctly (y_min to rim_y) at the full surface_r_map boundary.
+    # But it uses a flat rim_y ceiling for the drum wall area.  Here we
+    # load the rim mesh and compute a per-column max-Y from the mesh
+    # vertices, then trim the grid so the top follows the actual curved
+    # rim profile instead of a flat line.
+    print("\nPhase 5a: Rim top profile trim...")
     rim_path = 'data/drum_rim.obj'
     from pathlib import Path as PathLib
     if PathLib(rim_path).exists():
@@ -429,101 +435,47 @@ def main():
                     p = line.split()
                     rim_verts_list.append([float(p[1]), float(p[2]), float(p[3])])
         rim_verts = np.array(rim_verts_list)
-        print(f"  {len(rim_verts)} rim vertices loaded")
-
-        # Build 2D radial heightmap: R_max(theta_bin, y_bin)
         rim_rv = np.sqrt(rim_verts[:, 0]**2 + rim_verts[:, 2]**2)
-        rim_tv = np.arctan2(rim_verts[:, 2], rim_verts[:, 0])
-        rim_yv = rim_verts[:, 1]
+        print(f"  {len(rim_verts)} rim vertices, R=[{rim_rv.min():.1f}, {rim_rv.max():.1f}]")
 
-        n_theta_bins = 720   # 0.5 degree resolution
-        n_y_bins = max(10, int((rim_y - y_min) / res))
-        theta_edges = np.linspace(-np.pi, np.pi, n_theta_bins + 1)
-        y_edges = np.linspace(y_min, rim_y + res, n_y_bins + 1)
-        theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
-        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-
-        # Bin vertices: for each (theta, y) bin, record max R
-        r_heightmap = np.full((n_theta_bins, n_y_bins), 0.0)
-        theta_idx = np.clip(
-            ((rim_tv - theta_edges[0]) / (theta_edges[1] - theta_edges[0])).astype(int),
-            0, n_theta_bins - 1)
-        y_idx = np.clip(
-            ((rim_yv - y_edges[0]) / (y_edges[1] - y_edges[0])).astype(int),
-            0, n_y_bins - 1)
+        # Build per-column max-Y from rim mesh vertices.
+        # For each grid column (ix, iz), find the max Y of rim vertices
+        # that are nearby, giving the actual rim surface height.
+        rim_y_cap = np.full((nx, nz), rim_y)  # default to flat rim_y
+        spread = max(2, int(2.0 / res))  # spread in grid cells (~2mm)
         for vi in range(len(rim_verts)):
-            ti, yi = theta_idx[vi], y_idx[vi]
-            if rim_rv[vi] > r_heightmap[ti, yi]:
-                r_heightmap[ti, yi] = rim_rv[vi]
-            # Spread to neighbour bins for coverage
-            for dt in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    ti2 = (ti + dt) % n_theta_bins
-                    yi2 = min(max(yi + dy, 0), n_y_bins - 1)
-                    if rim_rv[vi] > r_heightmap[ti2, yi2]:
-                        r_heightmap[ti2, yi2] = rim_rv[vi]
+            ix_v = int((rim_verts[vi, 0] - x_range[0]) / res + 0.5)
+            iz_v = int((rim_verts[vi, 2] - z_range[0]) / res + 0.5)
+            for dix in range(-spread, spread + 1):
+                for diz in range(-spread, spread + 1):
+                    ixx = ix_v + dix
+                    izz = iz_v + diz
+                    if 0 <= ixx < nx and 0 <= izz < nz:
+                        if rim_verts[vi, 1] > rim_y_cap[ixx, izz]:
+                            rim_y_cap[ixx, izz] = rim_verts[vi, 1]
 
-        # Fill gaps: propagate from filled bins to empty neighbours
-        for _pass in range(3):
-            empty = r_heightmap == 0
-            if not empty.any():
-                break
-            from scipy.ndimage import maximum_filter
-            filled = maximum_filter(r_heightmap, size=3)
-            r_heightmap[empty] = filled[empty]
-
-        # Light smoothing to remove discretization noise
+        # Smooth the cap to avoid discretisation steps
         from scipy.ndimage import uniform_filter
-        r_heightmap = uniform_filter(r_heightmap, size=3)
+        rim_y_cap = uniform_filter(rim_y_cap, size=max(3, int(2.0 / res)))
 
-        print(f"  Radial heightmap: {n_theta_bins}x{n_y_bins} bins, "
-              f"R=[{r_heightmap[r_heightmap > 0].min():.1f}, {r_heightmap.max():.1f}]mm")
-
-        # Fill grid: for each voxel column (ix, iz), look up R_surface
-        # at (theta, y) and fill if rim_inner <= R <= R_surface.
-        # The inner edge connects to the body fill (at rim_clip_r) with
-        # 1mm overlap so the wall is seamlessly joined to the body.
-        rim_inner = rim_clip_r - 1.0  # 1mm overlap with body fill
-        n_rim_filled = 0
-        XX_rim, ZZ_rim = np.meshgrid(x_range, z_range, indexing='ij')
-        RR_rim = np.sqrt(XX_rim**2 + ZZ_rim**2)
-        THETA_rim = np.arctan2(ZZ_rim, XX_rim)
-        rim_cols = RR_rim > rim_inner
-        del XX_rim, ZZ_rim
-
+        # Trim: for columns in the rim area (R > rim_clip_r), cap the grid
+        # height at the rim surface instead of flat rim_y
+        n_trimmed = 0
+        XX_5a, ZZ_5a = np.meshgrid(x_range, z_range, indexing='ij')
+        RR_5a = np.sqrt(XX_5a**2 + ZZ_5a**2)
+        del XX_5a, ZZ_5a
         for ix in range(nx):
             for iz in range(nz):
-                if not rim_cols[ix, iz]:
+                if RR_5a[ix, iz] <= rim_clip_r:
                     continue
-                r_col = RR_rim[ix, iz]
-                theta_col = THETA_rim[ix, iz]
-                ti = int((theta_col - theta_edges[0]) /
-                         (theta_edges[1] - theta_edges[0]))
-                ti = ti % n_theta_bins
-
-                for iy in range(ny):
-                    if grid[ix, iy, iz] == 1:
-                        continue
-                    y_val = y_range[iy]
-                    yi = int((y_val - y_edges[0]) / (y_edges[1] - y_edges[0]))
-                    yi = min(max(yi, 0), n_y_bins - 1)
-                    r_surf = r_heightmap[ti, yi]
-                    if r_surf <= 0:
-                        continue
-                    if rim_inner <= r_col <= r_surf:
-                        grid[ix, iy, iz] = 1
-                        n_rim_filled += 1
-
-        del RR_rim, THETA_rim, rim_cols, r_heightmap
-        print(f"  {n_rim_filled} rim voxels added "
-              f"(R=[{rim_inner:.0f}..surface], smooth wall)")
-
-        # Cap at rim_y
-        iy_global_cap = min(ny, int((rim_y - y_range[0]) / res))
-        n_capped = int(grid[:, iy_global_cap:, :].sum())
-        grid[:, iy_global_cap:, :] = 0
-        if n_capped:
-            print(f"  {n_capped} voxels above rim_y capped")
+                yc = rim_y_cap[ix, iz]
+                iy_cap = min(ny, int((yc - y_range[0]) / res))
+                n_above = int(grid[ix, iy_cap:, iz].sum())
+                if n_above > 0:
+                    grid[ix, iy_cap:, iz] = 0
+                    n_trimmed += n_above
+        del RR_5a, rim_y_cap
+        print(f"  Trimmed {n_trimmed} voxels above rim profile")
     else:
         print(f"  {rim_path} not found — run extract_rim.py first")
 
@@ -849,7 +801,9 @@ def main():
     gc.collect()
 
     # Phase 7: Hardware holes — stop at base plate top (don't go through base)
-    print("\nPhase 7: Hardware holes (stop at base)...")
+    # Also skip columns in the drum wall area (R > rim_clip_r) so the wall
+    # is not punched through by hardware footprints that extend to the rim.
+    print("\nPhase 7: Hardware holes (stop at base, preserve wall)...")
     iy_base_top = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
     for note, path in hw_shapes.items():
         bounds = path.get_extents()
@@ -867,8 +821,13 @@ def main():
         for di in range(n_ix):
             for dj in range(n_iz):
                 if inside[di, dj]:
-                    # Clear from base top to surface (not through base)
-                    grid[ix_min + di, iy_base_top:, iz_min + dj] = 0
+                    ix_g = ix_min + di
+                    iz_g = iz_min + dj
+                    # Skip columns in the drum wall (R > rim_clip_r)
+                    r_col = math.sqrt(x_range[ix_g]**2 + z_range[iz_g]**2)
+                    if r_col > rim_clip_r:
+                        continue
+                    grid[ix_g, iy_base_top:, iz_g] = 0
     n_after = int(grid.sum())
     print(f"  {n_after / 1e6:.0f}M voxels")
 
