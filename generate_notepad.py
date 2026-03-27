@@ -91,7 +91,7 @@ SMALL_MIN_PAD_SIZE = CENTRAL_MIN_PAD_SIZE
 
 # M2 through-hole parameters (holes through full pad thickness)
 SCREW_HOLE_DIAMETER = 2.2     # M2 clearance hole (2.2mm for M2 bolt)
-SCREW_HOLE_INSET = 5.0        # Distance inset from pad boundary (~0.5cm from edge)
+SCREW_HOLE_INSET = 7.0        # Distance inset from pad boundary
 SCREW_HOLE_SEGMENTS = 16      # Resolution for hole cylinders
 SCREW_HOLE_COUNT = 4          # Number of holes per pad
 
@@ -1597,21 +1597,11 @@ def generate_notepad(note_index, obj_path, output_dir,
     print(f"Thickening pan surface (down: {pan_thickness}mm)...")
     _groove_attached = False
     if ring == 'inner':
-        # Inner pads: thicken the pad, then attach groove if available.
+        # Inner pads: thicken the pad only (no groove attachment).
         pan_solid_verts, pan_solid_faces = thicken_surface(pan_verts, pan_faces,
                                                             thickness_down=pan_thickness,
                                                             thickness_up=0)
         print(f"  Pan solid: {len(pan_solid_verts)} vertices, {len(pan_solid_faces)} faces")
-        # Attach groove to inner pad (same as central/outer)
-        if len(grove_verts) >= 3 and len(grove_faces) >= 1:
-            grove_solid_v, grove_solid_f = thicken_surface(grove_verts, grove_faces,
-                                                            thickness_down=pan_thickness,
-                                                            thickness_up=0)
-            n_pad_v = len(pan_solid_verts)
-            pan_solid_verts = np.vstack([pan_solid_verts, grove_solid_v])
-            pan_solid_faces += [[vi + n_pad_v for vi in f] for f in grove_solid_f]
-            _groove_attached = True
-            print(f"  + Groove attached: {len(grove_solid_v)}v, combined {len(pan_solid_verts)}v")
     elif ring == 'central':
         # Central pads: thicken pad, then also thicken groove and combine.
         # This extends the pad footprint into groove area so screw holes
@@ -1750,11 +1740,17 @@ def generate_notepad(note_index, obj_path, output_dir,
             # Save extended ring for screw hole placement
             _inner_extended_ring = extended_pts
 
-            # Thicken just the flange strip — will be appended AFTER screw holes
+            # Thicken the flange strip into a proper manifold solid,
+            # then fix the bottom vertices to use the pad surface normal
+            # (avoids divergent per-vertex normals that double thickness).
             flange_faces_only = ext_faces[len(pan_faces):]
             _flange_solid_v, _flange_solid_f = thicken_surface(
                 ext_verts, flange_faces_only,
-                thickness_down=pan_thickness, thickness_up=grove_protrusion)
+                thickness_down=pan_thickness, thickness_up=0)
+            # Override bottom vertex positions: uniform pan_normal direction
+            n_fv = len(ext_verts)
+            for i in range(n_fv):
+                _flange_solid_v[i + n_fv] = _flange_solid_v[i] - pan_normal * pan_thickness
             print(f"  Flange solid: {len(_flange_solid_v)} verts (appended after screw holes)")
         else:
             print(f"  WARNING: no boundary loop found, skipping extension")
@@ -1892,12 +1888,12 @@ def generate_notepad(note_index, obj_path, output_dir,
         # the pad, reject any too close to the edge or the hardware zone,
         # then greedily pick well-separated positions.
         if ring == 'inner':
-            MIN_EDGE_DIST = 2.2   # mm — pin head radius (1.9mm) + margin
+            MIN_EDGE_DIST = 4.0   # mm from pad boundary
             MIN_HW_DIST = 1.5     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 2         # 2 screws for inner pads
         else:
-            MIN_EDGE_DIST = 3.0   # mm from pad boundary
+            MIN_EDGE_DIST = 5.0   # mm from pad boundary
             MIN_HW_DIST = 3.0     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 4
@@ -1926,7 +1922,7 @@ def generate_notepad(note_index, obj_path, output_dir,
             if _have_boundary:
                 bvi = max(loops, key=len)
                 bpts = pan_verts[bvi]
-                MIN_EDGE_DIST = 2.0   # relaxed from 3.0 — groove extends beyond pad
+                MIN_EDGE_DIST = 4.0   # relaxed — groove extends beyond pad
                 print(f"  Using pad boundary with relaxed edge dist ({MIN_EDGE_DIST}mm, groove attached)")
         else:
             be = find_boundary_edges(pan_faces)
@@ -2147,6 +2143,12 @@ def generate_notepad(note_index, obj_path, output_dir,
                             total_h=pan_thickness + 2,
                             taper_h=COUNTERSINK_DEPTH,
                             segments=16)
+                        # Rotate 180° about X so countersink faces -Z
+                        # (local -Z → world +n_hat = playing surface side)
+                        R180 = np.eye(4)
+                        R180[1, 1] = -1
+                        R180[2, 2] = -1
+                        tool.apply_transform(R180)
                         T = np.eye(4)
                         T[0, 3] = hx
                         T[1, 3] = hy
