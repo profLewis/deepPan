@@ -1,85 +1,57 @@
 #!/usr/bin/env python3
 """
-Structural cylinder parameters for the inner and outer support cylinders.
+Structural cylinder and radial strut parameters.
 
-These cylinders go vertically through the drum, clipped at the drum surface.
-They provide structural support and divide the interior into zones.
+The drum interior is supported by:
+- A single cylinder (R=115..135mm), split at R=125mm for assembly
+- 6 radial struts at 60deg intervals (aligned with section boundaries)
 
-The inner cylinder has:
-  - 250mm outer diameter, 10mm wall thickness
-  - Screw holes to attach to base plate
-  - Keyed slot for alignment with outer cylinder
+Assembly: 7 pieces total
+  1 central piece (R < 125mm): inner cylinder wall + strut hubs, 6 vertical slots
+  6 outer pieces (R >= 125mm): outer cylinder arc + strut segments, with keys
 
-The outer cylinder has:
-  - Fits snugly around the inner cylinder with tolerance
-  - 10mm wall thickness, ~271mm outer diameter
-  - Key protrusion at bottom for alignment
-  - 30mm wiring hole through both cylinders
-
-Both are clipped at the drum surface so they don't protrude.
+Joinery (all full-height):
+  - Radial key/slot at R=125mm, at each strut angle: 10mm wide, 2.5mm deep
+  - Side key/slot on strut edges: 2.5mm deep, full radial length
 """
 
 import math
-import numpy as np
 
-# ── Inner cylinder ──────────────────────────────────────────────
-INNER_CYL_OUTER_R = 125.0       # mm (250mm outer diameter)
-INNER_CYL_WALL = 10.0           # mm wall thickness
-INNER_CYL_INNER_R = INNER_CYL_OUTER_R - INNER_CYL_WALL  # 115mm
+# ── Cylinder (split at CYL_SPLIT_R for assembly) ─────────────
+CYL_OUTER_R = 135.0            # mm
+CYL_INNER_R = 115.0            # mm
+CYL_SPLIT_R = 125.0            # mm — assembly cut radius
 
-# ── Outer cylinder ──────────────────────────────────────────────
-CYL_TOLERANCE = 0.5              # mm gap between inner and outer
-OUTER_CYL_INNER_R = INNER_CYL_OUTER_R + CYL_TOLERANCE    # 125.5mm
-OUTER_CYL_WALL = 10.0           # mm
-OUTER_CYL_OUTER_R = OUTER_CYL_INNER_R + OUTER_CYL_WALL   # 135.5mm
+# ── Radial struts ─────────────────────────────────────────────
+N_STRUTS = 6
+STRUT_WALL = 20.0              # mm tangential thickness
+STRUT_HALF_W = STRUT_WALL / 2  # 10mm
+# Strut angles: section boundaries (gaps between outer pads)
+STRUT_ANGLES_DEG = [15.0, 75.0, 135.0, 195.0, 255.0, 315.0]
+STRUT_ANGLES_RAD = [math.radians(a) for a in STRUT_ANGLES_DEG]
 
-# ── Key/slot alignment ──────────────────────────────────────────
-KEY_WIDTH = 10.0                 # mm circumferential width
-KEY_DEPTH = CYL_TOLERANCE + 2.0 # mm radial (bridges gap + into inner cyl)
-KEY_HEIGHT = 10.0                # mm vertical (at bottom of cylinders)
-KEY_ANGLE = 0.0                  # radians — angular position of key
+# ── Key/slot (full height) ───────────────────────────────────
+KEY_WIDTH = 10.0               # mm — tangential span of radial keys
+KEY_DEPTH = 2.5                # mm — protrusion depth
 
-# ── Wiring hole ─────────────────────────────────────────────────
-WIRE_HOLE_R = 15.0               # mm (30mm diameter)
-WIRE_HOLE_ANGLE = math.pi        # opposite side from key
-WIRE_HOLE_CENTER_HEIGHT = 30.0   # mm above base plate
+# ── Wiring holes (30mm diameter, horizontal) ──────────────────
+WIRE_HOLE_R = 15.0             # mm radius (30mm dia)
+WIRE_HOLE_CENTER_HEIGHT = 30.0 # mm above base plate
+# Strut wiring holes: one per strut at this radial position
+STRUT_WIRE_R_POS = 175.0      # mm
+# Cylinder wiring holes: 6, at sector midpoints (between struts)
+WIRE_CYL_ANGLES_DEG = [45.0, 105.0, 165.0, 225.0, 285.0, 345.0]
+WIRE_CYL_ANGLES_RAD = [math.radians(a) for a in WIRE_CYL_ANGLES_DEG]
 
-# ── Base attachment screws ──────────────────────────────────────
-INNER_CYL_SCREW_N = 8           # M3 screws for inner cylinder
-OUTER_CYL_SCREW_N = 8           # M3 screws for outer cylinder
-CYL_SCREW_PILOT_R = 1.25        # M3 tapped pilot radius
-CYL_SCREW_CLEAR_R = 1.7         # M3 clearance in base plate
-CYL_SCREW_DEPTH = 8.0           # pilot hole depth into cylinder wall
-# Screw positions: at mid-wall radius of each cylinder
-INNER_CYL_SCREW_R = (INNER_CYL_INNER_R + INNER_CYL_OUTER_R) / 2  # 120mm
-OUTER_CYL_SCREW_R = (OUTER_CYL_INNER_R + OUTER_CYL_OUTER_R) / 2  # 130.5mm
-
-
-def is_in_key_arc(angle, key_angle=KEY_ANGLE, key_width=KEY_WIDTH, radius=OUTER_CYL_INNER_R):
-    """Check if an angle falls within the key arc."""
-    half_arc = key_width / (2 * radius)  # angular half-width in radians
-    diff = (angle - key_angle + math.pi) % (2 * math.pi) - math.pi
-    return abs(diff) <= half_arc
-
-
-def is_in_wire_hole(x, z, y, base_y, wire_angle=WIRE_HOLE_ANGLE,
-                    wire_r=WIRE_HOLE_R, wire_height=WIRE_HOLE_CENTER_HEIGHT):
-    """Check if a point (x,z,y) falls inside the wiring hole cylinder.
-
-    The wiring hole is a horizontal cylinder at a given angle,
-    passing through both cylinder walls at a given height above the base.
-    """
-    wire_center_y = base_y + wire_height
-    # The hole axis is along the radial direction at wire_angle
-    # Project the point onto the plane perpendicular to the radial direction
-    cos_a = math.cos(wire_angle)
-    sin_a = math.sin(wire_angle)
-    # Radial component (along the hole axis)
-    # radial = x * cos_a + z * sin_a  # not needed for distance calc
-    # Tangential component (perpendicular to hole axis in XZ plane)
-    tangential = -x * sin_a + z * cos_a
-    # Vertical component
-    vertical = y - wire_center_y
-    # Distance from hole axis
-    dist_sq = tangential * tangential + vertical * vertical
-    return dist_sq <= wire_r * wire_r
+# ── Screw holes (M3, base plate attachment) ───────────────────
+SCREW_PILOT_R = 1.25           # M3 tapped pilot radius
+SCREW_CLEAR_R = 1.7            # M3 clearance radius
+SCREW_DEPTH = 8.0              # pilot hole depth into material
+SCREW_EDGE_MAX = 5.0           # max distance from nearest edge
+# Cylinder screws: two rings near edges, 6 per ring at sector midpoints
+CYL_SCREW_R_INNER = CYL_INNER_R + SCREW_EDGE_MAX   # 120mm
+CYL_SCREW_R_OUTER = CYL_OUTER_R - SCREW_EDGE_MAX   # 130mm
+CYL_SCREW_N = 6               # per ring
+# Strut screws: two rows per strut (5mm from each tangential edge)
+STRUT_SCREW_SPACING = 40.0    # mm between screws along strut length
+STRUT_SCREW_R_START = CYL_OUTER_R + 10  # 145mm — start past cylinder
