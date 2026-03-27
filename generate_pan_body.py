@@ -1033,6 +1033,51 @@ def main():
                     n_cleanup += int(grid[ix_min + di, iy_base_top_8c:, iz_min + dj].sum())
                     grid[ix_min + di, iy_base_top_8c:, iz_min + dj] = 0
     print(f"  Cleaned {n_cleanup} voxels")
+
+    # Phase 8d: Strict assembly overlap erosion.
+    # Zero ALL body voxels that fall inside any assembly_view object's 3D
+    # volume (Pad, MountBase, Sleeve).  This is the final quality gate —
+    # nothing in the body grid may protrude into any component.
+    print("\nPhase 8d: Assembly overlap erosion...")
+    n_eroded = 0
+    for obj_name, obj_vis in a_objects.items():
+        # Only erode for pads, mounts, sleeves
+        if not (obj_name.startswith('Pad_') or obj_name.startswith('MountBase_')
+                or obj_name.startswith('Sleeve_')):
+            continue
+        ov = a_verts[sorted(obj_vis)]
+        if len(ov) < 3:
+            continue
+        obj_xz = ov[:, [0, 2]]
+        obj_y_min = float(ov[:, 1].min())
+        obj_y_max = float(ov[:, 1].max())
+        try:
+            hull = ConvexHull(obj_xz)
+            obj_path = MplPath(obj_xz[hull.vertices])
+        except Exception:
+            continue
+        bounds = obj_path.get_extents()
+        ix_lo = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+        ix_hi = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+        iz_lo = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+        iz_hi = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+        iy_lo = max(0, int((obj_y_min - y_range[0]) / res))
+        iy_hi = min(ny, int((obj_y_max - y_range[0]) / res) + 1)
+        n_ix, n_iz = ix_hi - ix_lo + 1, iz_hi - iz_lo + 1
+        if n_ix <= 0 or n_iz <= 0:
+            continue
+        TX, TZ = np.meshgrid(x_range[ix_lo:ix_hi + 1],
+                             z_range[iz_lo:iz_hi + 1], indexing='ij')
+        inside = obj_path.contains_points(
+            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+        for di in range(n_ix):
+            for dj in range(n_iz):
+                if inside[di, dj]:
+                    ix_g = ix_lo + di
+                    iz_g = iz_lo + dj
+                    n_eroded += int(grid[ix_g, iy_lo:iy_hi, iz_g].sum())
+                    grid[ix_g, iy_lo:iy_hi, iz_g] = 0
+    print(f"  Eroded {n_eroded} voxels from {sum(1 for n in a_objects if n.startswith(('Pad_','MountBase_','Sleeve_')))} assembly objects")
     print(f"  Final body: {int(grid.sum()) / 1e6:.0f}M voxels")
 
     # Phase 9: Separate base plate
