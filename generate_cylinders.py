@@ -3,24 +3,24 @@
 Structural cylinder and radial strut parameters.
 
 The drum interior is supported by:
-- A single cylinder (R=115..135mm), split at R=125mm for assembly
+- A single cylinder (R=100..120mm), split at R=110mm for assembly
 - 6 radial struts at 60deg intervals (aligned with section boundaries)
 
 Assembly: 7 pieces total
-  1 central piece (R < 125mm): inner cylinder wall + strut hubs, 6 vertical slots
-  6 outer pieces (R >= 125mm): outer cylinder arc + strut segments, with keys
+  1 central piece (R < 110mm): inner cylinder wall + strut hubs, 6 vertical slots
+  6 outer pieces (R >= 110mm): outer cylinder arc + strut segments, with keys
 
 Joinery (all full-height):
-  - Radial key/slot at R=125mm, at each strut angle: 10mm wide, 2.5mm deep
+  - Radial key/slot at R=110mm, at each strut angle: 10mm wide, 2.5mm deep
   - Side key/slot on strut edges: 2.5mm deep, full radial length
 """
 
 import math
 
 # ── Cylinder (split at CYL_SPLIT_R for assembly) ─────────────
-CYL_OUTER_R = 135.0            # mm
-CYL_INNER_R = 115.0            # mm
-CYL_SPLIT_R = 125.0            # mm — assembly cut radius
+CYL_OUTER_R = 120.0            # mm
+CYL_INNER_R = 100.0            # mm
+CYL_SPLIT_R = 110.0            # mm — assembly cut radius (220mm max central piece)
 
 # ── Radial struts ─────────────────────────────────────────────
 N_STRUTS = 6
@@ -49,9 +49,9 @@ SCREW_CLEAR_R = 1.7            # M3 clearance radius
 SCREW_DEPTH = 8.0              # pilot hole depth into material
 SCREW_EDGE_MAX = 5.0           # max distance from nearest edge
 # Cylinder screws: two rings near edges, 6 per ring at sector midpoints
-CYL_SCREW_R_INNER = CYL_INNER_R + SCREW_EDGE_MAX   # 120mm
-CYL_SCREW_R_OUTER = CYL_OUTER_R - SCREW_EDGE_MAX   # 130mm
+CYL_SCREW_R_INNER = CYL_INNER_R + SCREW_EDGE_MAX   # 105mm
+CYL_SCREW_R_OUTER = CYL_OUTER_R - SCREW_EDGE_MAX   # 115mm
 CYL_SCREW_N = 6               # per ring
 # Strut screws: two rows per strut (5mm from each tangential edge)
 STRUT_SCREW_SPACING = 40.0    # mm between screws along strut length
-STRUT_SCREW_R_START = CYL_OUTER_R + 10  # 145mm — start past cylinder
+STRUT_SCREW_R_START = CYL_OUTER_R + 10  # 130mm — start past cylinder
