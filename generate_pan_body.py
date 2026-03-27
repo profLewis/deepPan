@@ -412,144 +412,118 @@ def main():
     n_solid = int(grid.sum())
     print(f"  {n_solid / 1e6:.0f}M voxels")
 
-    # Phase 5a: Voxelize rim mesh (thickened inward) into the grid.
-    # The rim surface at R > rim_clip_r is loaded from the mesh produced by
-    # extract_rim.py, thickened inward by PAN_THICKNESS, and merged into the
-    # solid grid.  Pad pockets (5b) and hardware holes (7) carve through it.
-    print("\nPhase 5a: Rim voxelization...")
+    # Phase 5a: Integrate rim via smooth radial heightmap.
+    # Instead of per-triangle voxelization (which creates bumpy staircase
+    # artifacts on the cylindrical wall), build a 2D radial heightmap
+    # R_surface(theta, Y) from the rim mesh vertices and fill the grid
+    # smoothly: a voxel at (x,y,z) is filled if its radius R is between
+    # R_surface - thickness and R_surface at the corresponding (theta, y).
+    print("\nPhase 5a: Rim integration (radial heightmap)...")
     rim_path = 'data/drum_rim.obj'
     from pathlib import Path as PathLib
     if PathLib(rim_path).exists():
-        from generate_quarter import compute_face_normals as _cfn
-        rim_verts, rim_faces = [], []
+        rim_verts_list = []
         with open(rim_path) as rf:
             for line in rf:
                 if line.startswith('v '):
                     p = line.split()
-                    rim_verts.append([float(p[1]), float(p[2]), float(p[3])])
-                elif line.startswith('f '):
-                    face = [int(tok.split('/')[0]) - 1 for tok in line.split()[1:]]
-                    rim_faces.append(face)
-        rim_verts = np.array(rim_verts)
-        # Triangulate quads
-        rim_tris = []
-        for face in rim_faces:
-            for i in range(1, len(face) - 1):
-                rim_tris.append([face[0], face[i], face[i + 1]])
-        rim_tris_arr = np.array(rim_tris)
-        rim_normals = _cfn(rim_verts, rim_tris)
+                    rim_verts_list.append([float(p[1]), float(p[2]), float(p[3])])
+        rim_verts = np.array(rim_verts_list)
+        print(f"  {len(rim_verts)} rim vertices loaded")
 
-        # Build per-column Y cap from the rim mesh: for each XZ column,
-        # the max Y of any rim vertex in that column's neighbourhood.
-        # This gives a smooth height ceiling that follows the rim surface
-        # instead of a flat rim_y, eliminating crenellation artefacts.
-        print("  Computing rim height cap per column...")
-        rim_y_cap = np.full((nx, nz), y_min)
-        rim_r = np.sqrt(rim_verts[:, 0]**2 + rim_verts[:, 2]**2)
+        # Build 2D radial heightmap: R_max(theta_bin, y_bin)
+        rim_rv = np.sqrt(rim_verts[:, 0]**2 + rim_verts[:, 2]**2)
+        rim_tv = np.arctan2(rim_verts[:, 2], rim_verts[:, 0])
+        rim_yv = rim_verts[:, 1]
+
+        n_theta_bins = 720   # 0.5 degree resolution
+        n_y_bins = max(10, int((rim_y - y_min) / res))
+        theta_edges = np.linspace(-np.pi, np.pi, n_theta_bins + 1)
+        y_edges = np.linspace(y_min, rim_y + res, n_y_bins + 1)
+        theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+
+        # Bin vertices: for each (theta, y) bin, record max R
+        r_heightmap = np.full((n_theta_bins, n_y_bins), 0.0)
+        theta_idx = np.clip(
+            ((rim_tv - theta_edges[0]) / (theta_edges[1] - theta_edges[0])).astype(int),
+            0, n_theta_bins - 1)
+        y_idx = np.clip(
+            ((rim_yv - y_edges[0]) / (y_edges[1] - y_edges[0])).astype(int),
+            0, n_y_bins - 1)
         for vi in range(len(rim_verts)):
-            ix_v = int((rim_verts[vi, 0] - x_range[0]) / res + 0.5)
-            iz_v = int((rim_verts[vi, 2] - z_range[0]) / res + 0.5)
-            # Spread to neighbouring columns (±1) for coverage
-            for dix in range(-1, 2):
-                for diz in range(-1, 2):
-                    ixx = ix_v + dix
-                    izz = iz_v + diz
-                    if 0 <= ixx < nx and 0 <= izz < nz:
-                        if rim_verts[vi, 1] > rim_y_cap[ixx, izz]:
-                            rim_y_cap[ixx, izz] = rim_verts[vi, 1]
+            ti, yi = theta_idx[vi], y_idx[vi]
+            if rim_rv[vi] > r_heightmap[ti, yi]:
+                r_heightmap[ti, yi] = rim_rv[vi]
+            # Spread to neighbour bins for coverage
+            for dt in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    ti2 = (ti + dt) % n_theta_bins
+                    yi2 = min(max(yi + dy, 0), n_y_bins - 1)
+                    if rim_rv[vi] > r_heightmap[ti2, yi2]:
+                        r_heightmap[ti2, yi2] = rim_rv[vi]
 
-        # For each triangle, fill voxels within PAN_THICKNESS inward.
-        n_rim_filled = 0
+        # Fill gaps: propagate from filled bins to empty neighbours
+        for _pass in range(3):
+            empty = r_heightmap == 0
+            if not empty.any():
+                break
+            from scipy.ndimage import maximum_filter
+            filled = maximum_filter(r_heightmap, size=3)
+            r_heightmap[empty] = filled[empty]
+
+        # Light smoothing to remove discretization noise
+        from scipy.ndimage import uniform_filter
+        r_heightmap = uniform_filter(r_heightmap, size=3)
+
+        print(f"  Radial heightmap: {n_theta_bins}x{n_y_bins} bins, "
+              f"R=[{r_heightmap[r_heightmap > 0].min():.1f}, {r_heightmap.max():.1f}]mm")
+
+        # Fill grid: for each voxel column (ix, iz), look up R_surface
+        # at (theta, y) and fill if R_surface - thickness <= R <= R_surface.
         thickness = PAN_THICKNESS
-        drum_interior = np.array([0.0, (y_min + rim_y) / 2.0, 0.0])
-        for ti in range(len(rim_tris)):
-            tri = rim_tris_arr[ti]
-            v0, v1, v2 = rim_verts[tri[0]], rim_verts[tri[1]], rim_verts[tri[2]]
-            n = rim_normals[ti]
-            nl = np.linalg.norm(n)
-            if nl < 1e-10:
-                continue
-            n = n / nl
-            # Ensure normal points inward (toward drum interior)
-            centroid = (v0 + v1 + v2) / 3.0
-            to_interior = drum_interior - centroid
-            to_interior_n = np.linalg.norm(to_interior)
-            if to_interior_n > 0:
-                to_interior /= to_interior_n
-            if np.dot(n, to_interior) < 0:
-                n = -n
+        n_rim_filled = 0
+        XX_rim, ZZ_rim = np.meshgrid(x_range, z_range, indexing='ij')
+        RR_rim = np.sqrt(XX_rim**2 + ZZ_rim**2)
+        THETA_rim = np.arctan2(ZZ_rim, XX_rim)
+        # Only process columns in the rim area (R > rim_clip_r - thickness)
+        rim_cols = RR_rim > (rim_clip_r - thickness)
+        del XX_rim, ZZ_rim
 
-            # Bounding box of the triangle + thickness sweep
-            all_pts = np.array([v0, v1, v2,
-                                v0 + n * thickness,
-                                v1 + n * thickness,
-                                v2 + n * thickness])
-            bb_min = all_pts.min(axis=0)
-            bb_max = all_pts.max(axis=0)
-
-            ix_lo = max(0, int((bb_min[0] - x_range[0]) / res))
-            ix_hi = min(nx - 1, int((bb_max[0] - x_range[0]) / res) + 1)
-            iy_lo = max(0, int((bb_min[1] - y_range[0]) / res))
-            iy_hi = min(ny - 1, int((bb_max[1] - y_range[0]) / res) + 1)
-            iz_lo = max(0, int((bb_min[2] - z_range[0]) / res))
-            iz_hi = min(nz - 1, int((bb_max[2] - z_range[0]) / res) + 1)
-
-            # Triangle edges for barycentric test
-            e0 = v1 - v0
-            e1 = v2 - v0
-            d00 = np.dot(e0, e0)
-            d01 = np.dot(e0, e1)
-            d11 = np.dot(e1, e1)
-            denom = d00 * d11 - d01 * d01
-            if abs(denom) < 1e-12:
-                continue
-
-            for ix in range(ix_lo, ix_hi + 1):
-                px = x_range[ix]
-                for iz in range(iz_lo, iz_hi + 1):
-                    pz = z_range[iz]
-                    # Per-column Y cap from rim surface
-                    iy_cap = min(iy_hi, int((rim_y_cap[ix, iz] - y_range[0]) / res))
-                    for iy in range(iy_lo, min(iy_hi + 1, iy_cap + 1)):
-                        if grid[ix, iy, iz] == 1:
-                            continue
-                        py = y_range[iy]
-                        p = np.array([px, py, pz])
-                        # Signed distance from triangle plane (no margin)
-                        dp = p - v0
-                        dist = np.dot(dp, n)
-                        if dist < 0 or dist > thickness:
-                            continue
-                        # Project onto triangle plane
-                        proj = p - dist * n
-                        dp2 = proj - v0
-                        d20 = np.dot(dp2, e0)
-                        d21 = np.dot(dp2, e1)
-                        u = (d11 * d20 - d01 * d21) / denom
-                        v = (d00 * d21 - d01 * d20) / denom
-                        if u >= 0 and v >= 0 and (u + v) <= 1.0:
-                            grid[ix, iy, iz] = 1
-                            n_rim_filled += 1
-
-        # Final hard cap: zero anything above the per-column rim height.
-        # Use floor (no +1) for a strict cap right at the surface.
-        n_capped = 0
         for ix in range(nx):
             for iz in range(nz):
-                yc = rim_y_cap[ix, iz]
-                if yc > y_min:
-                    iy_cap = min(ny, int((yc - y_range[0]) / res))
-                    n_capped += int(grid[ix, iy_cap:, iz].sum())
-                    grid[ix, iy_cap:, iz] = 0
-        # Also global cap at rim_y (catches any column with no rim vertices)
-        iy_global_cap = min(ny, int((rim_y - y_range[0]) / res))
-        n_global = int(grid[:, iy_global_cap:, :].sum())
-        grid[:, iy_global_cap:, :] = 0
-        n_capped += n_global
-        del rim_y_cap
+                if not rim_cols[ix, iz]:
+                    continue
+                r_col = RR_rim[ix, iz]
+                theta_col = THETA_rim[ix, iz]
+                # Theta bin index
+                ti = int((theta_col - theta_edges[0]) /
+                         (theta_edges[1] - theta_edges[0]))
+                ti = ti % n_theta_bins
 
-        print(f"  {len(rim_tris)} rim triangles, {n_rim_filled} voxels added "
-              f"({thickness}mm inward), {n_capped} above rim cap trimmed")
+                for iy in range(ny):
+                    if grid[ix, iy, iz] == 1:
+                        continue
+                    y_val = y_range[iy]
+                    # Y bin index
+                    yi = int((y_val - y_edges[0]) / (y_edges[1] - y_edges[0]))
+                    yi = min(max(yi, 0), n_y_bins - 1)
+                    r_surf = r_heightmap[ti, yi]
+                    if r_surf <= 0:
+                        continue
+                    if r_surf - thickness <= r_col <= r_surf:
+                        grid[ix, iy, iz] = 1
+                        n_rim_filled += 1
+
+        del RR_rim, THETA_rim, rim_cols, r_heightmap
+        print(f"  {n_rim_filled} rim voxels added ({thickness}mm inward, smooth)")
+
+        # Cap at rim_y
+        iy_global_cap = min(ny, int((rim_y - y_range[0]) / res))
+        n_capped = int(grid[:, iy_global_cap:, :].sum())
+        grid[:, iy_global_cap:, :] = 0
+        if n_capped:
+            print(f"  {n_capped} voxels above rim_y capped")
     else:
         print(f"  {rim_path} not found — run extract_rim.py first")
 
