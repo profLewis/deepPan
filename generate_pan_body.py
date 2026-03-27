@@ -373,9 +373,15 @@ def main():
     grid_theta = np.arctan2(ZI, XI)
     surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
                               period=2 * np.pi).reshape(grid_theta.shape)
-    inside_drum = RR <= surface_r_map
-    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm")
-    del bowl_r, bowl_theta, surface_r_map, grid_theta
+    # Heightmap fill boundary: clipped at rim_clip_r so the drum wall
+    # area (R > rim_clip_r) is filled ONLY by the rim mesh voxelization
+    # (Phase 5a), not by the flat rim_y approximation.  This eliminates
+    # the noisy overlap between heightmap and rim at the top of the drum.
+    r_fill_limit = np.minimum(surface_r_map, rim_clip_r)
+    inside_drum = RR <= r_fill_limit
+    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm, "
+          f"fill clipped at R={rim_clip_r:.1f}")
+    del bowl_r, bowl_theta, surface_r_map, r_fill_limit, grid_theta
 
     height_map[np.isnan(height_map) & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
@@ -433,10 +439,29 @@ def main():
         rim_tris_arr = np.array(rim_tris)
         rim_normals = _cfn(rim_verts, rim_tris)
 
-        # For each triangle, compute bounding box and fill voxels that are
-        # within PAN_THICKNESS inward from the surface.
+        # Build per-column Y cap from the rim mesh: for each XZ column,
+        # the max Y of any rim vertex in that column's neighbourhood.
+        # This gives a smooth height ceiling that follows the rim surface
+        # instead of a flat rim_y, eliminating crenellation artefacts.
+        print("  Computing rim height cap per column...")
+        rim_y_cap = np.full((nx, nz), y_min)
+        rim_r = np.sqrt(rim_verts[:, 0]**2 + rim_verts[:, 2]**2)
+        for vi in range(len(rim_verts)):
+            ix_v = int((rim_verts[vi, 0] - x_range[0]) / res + 0.5)
+            iz_v = int((rim_verts[vi, 2] - z_range[0]) / res + 0.5)
+            # Spread to neighbouring columns (±1) for coverage
+            for dix in range(-1, 2):
+                for diz in range(-1, 2):
+                    ixx = ix_v + dix
+                    izz = iz_v + diz
+                    if 0 <= ixx < nx and 0 <= izz < nz:
+                        if rim_verts[vi, 1] > rim_y_cap[ixx, izz]:
+                            rim_y_cap[ixx, izz] = rim_verts[vi, 1]
+
+        # For each triangle, fill voxels within PAN_THICKNESS inward.
         n_rim_filled = 0
         thickness = PAN_THICKNESS
+        drum_interior = np.array([0.0, (y_min + rim_y) / 2.0, 0.0])
         for ti in range(len(rim_tris)):
             tri = rim_tris_arr[ti]
             v0, v1, v2 = rim_verts[tri[0]], rim_verts[tri[1]], rim_verts[tri[2]]
@@ -445,11 +470,8 @@ def main():
             if nl < 1e-10:
                 continue
             n = n / nl
-            # Ensure normal points inward (toward drum interior).
-            # Use a 3D interior reference point so this works for the
-            # cylindrical wall (radial), rim top (vertical), and transition.
+            # Ensure normal points inward (toward drum interior)
             centroid = (v0 + v1 + v2) / 3.0
-            drum_interior = np.array([0.0, (y_min + rim_y) / 2.0, 0.0])
             to_interior = drum_interior - centroid
             to_interior_n = np.linalg.norm(to_interior)
             if to_interior_n > 0:
@@ -465,12 +487,12 @@ def main():
             bb_min = all_pts.min(axis=0)
             bb_max = all_pts.max(axis=0)
 
-            ix_lo = max(0, int((bb_min[0] - x_range[0]) / res) - 1)
-            ix_hi = min(nx - 1, int((bb_max[0] - x_range[0]) / res) + 2)
-            iy_lo = max(0, int((bb_min[1] - y_range[0]) / res) - 1)
-            iy_hi = min(ny - 1, int((bb_max[1] - y_range[0]) / res) + 2)
-            iz_lo = max(0, int((bb_min[2] - z_range[0]) / res) - 1)
-            iz_hi = min(nz - 1, int((bb_max[2] - z_range[0]) / res) + 2)
+            ix_lo = max(0, int((bb_min[0] - x_range[0]) / res))
+            ix_hi = min(nx - 1, int((bb_max[0] - x_range[0]) / res) + 1)
+            iy_lo = max(0, int((bb_min[1] - y_range[0]) / res))
+            iy_hi = min(ny - 1, int((bb_max[1] - y_range[0]) / res) + 1)
+            iz_lo = max(0, int((bb_min[2] - z_range[0]) / res))
+            iz_hi = min(nz - 1, int((bb_max[2] - z_range[0]) / res) + 1)
 
             # Triangle edges for barycentric test
             e0 = v1 - v0
@@ -486,15 +508,17 @@ def main():
                 px = x_range[ix]
                 for iz in range(iz_lo, iz_hi + 1):
                     pz = z_range[iz]
-                    for iy in range(iy_lo, iy_hi + 1):
+                    # Per-column Y cap from rim surface
+                    iy_cap = min(iy_hi, int((rim_y_cap[ix, iz] - y_range[0]) / res))
+                    for iy in range(iy_lo, min(iy_hi + 1, iy_cap + 1)):
                         if grid[ix, iy, iz] == 1:
                             continue
                         py = y_range[iy]
                         p = np.array([px, py, pz])
-                        # Signed distance from triangle plane
+                        # Signed distance from triangle plane (no margin)
                         dp = p - v0
                         dist = np.dot(dp, n)
-                        if dist < -res or dist > thickness + res:
+                        if dist < 0 or dist > thickness:
                             continue
                         # Project onto triangle plane
                         proj = p - dist * n
@@ -503,20 +527,29 @@ def main():
                         d21 = np.dot(dp2, e1)
                         u = (d11 * d20 - d01 * d21) / denom
                         v = (d00 * d21 - d01 * d20) / denom
-                        # Inside triangle with small margin
-                        margin = res / max(np.linalg.norm(e0), np.linalg.norm(e1), 1.0)
-                        if u >= -margin and v >= -margin and (u + v) <= 1.0 + margin:
+                        if u >= 0 and v >= 0 and (u + v) <= 1.0:
                             grid[ix, iy, iz] = 1
                             n_rim_filled += 1
 
-        # Hard cap: no voxels above rim_y (removes stray spikes from
-        # voxelization margin on top-facing rim faces)
-        iy_rim_cap = min(ny, int((rim_y - y_range[0]) / res) + 1)
-        n_capped = int(grid[:, iy_rim_cap:, :].sum())
-        grid[:, iy_rim_cap:, :] = 0
+        # Final hard cap: zero anything above the per-column rim height.
+        # Use floor (no +1) for a strict cap right at the surface.
+        n_capped = 0
+        for ix in range(nx):
+            for iz in range(nz):
+                yc = rim_y_cap[ix, iz]
+                if yc > y_min:
+                    iy_cap = min(ny, int((yc - y_range[0]) / res))
+                    n_capped += int(grid[ix, iy_cap:, iz].sum())
+                    grid[ix, iy_cap:, iz] = 0
+        # Also global cap at rim_y (catches any column with no rim vertices)
+        iy_global_cap = min(ny, int((rim_y - y_range[0]) / res))
+        n_global = int(grid[:, iy_global_cap:, :].sum())
+        grid[:, iy_global_cap:, :] = 0
+        n_capped += n_global
+        del rim_y_cap
 
         print(f"  {len(rim_tris)} rim triangles, {n_rim_filled} voxels added "
-              f"({thickness}mm inward), {n_capped} above rim_y capped")
+              f"({thickness}mm inward), {n_capped} above rim cap trimmed")
     else:
         print(f"  {rim_path} not found — run extract_rim.py first")
 
@@ -565,7 +598,16 @@ def main():
         for di in range(n_ix):
             for dj in range(n_iz):
                 if inside[di, dj]:
-                    grid[ix_min + di, iy_floor:iy_top_pad, iz_min + dj] = 0
+                    ix_g = ix_min + di
+                    iz_g = iz_min + dj
+                    # Use local column top to determine carve top: if the body
+                    # surface is above pad_y_top (common for inner pads), carve
+                    # up to the surface so the pocket is properly visible.
+                    iy_top_local = iy_top_pad
+                    if 0 <= ix_g < nx and 0 <= iz_g < nz:
+                        iy_col = int(iy_top[ix_g, iz_g])
+                        iy_top_local = max(iy_top_local, iy_col)
+                    grid[ix_g, iy_floor:iy_top_local, iz_g] = 0
                     n_pocketed += 1
     print(f"  Pocketed {n_pocketed} columns for {len(NOTE_BY_INDEX)} pads")
 
