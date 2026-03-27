@@ -373,15 +373,9 @@ def main():
     grid_theta = np.arctan2(ZI, XI)
     surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
                               period=2 * np.pi).reshape(grid_theta.shape)
-    # Clip at rim boundary: body stops at rim_clip_r, rim mesh covers beyond
-    r_boundary = np.minimum(surface_r_map, rim_clip_r)
-    inside_drum = RR <= r_boundary
-    r_min_bnd = r_boundary[inside_drum].min()
-    r_max_bnd = r_boundary[inside_drum].max()
-    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm, "
-          f"clipped at rim R={rim_clip_r:.1f}")
-    print(f"  Fill boundary: [{r_min_bnd:.1f}, {r_max_bnd:.1f}]mm")
-    del bowl_r, bowl_theta, surface_r_map, r_boundary, grid_theta
+    inside_drum = RR <= surface_r_map
+    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm")
+    del bowl_r, bowl_theta, surface_r_map, grid_theta
 
     height_map[np.isnan(height_map) & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
@@ -411,6 +405,113 @@ def main():
                 grid[ix, :iy_end, iz] = 1
     n_solid = int(grid.sum())
     print(f"  {n_solid / 1e6:.0f}M voxels")
+
+    # Phase 5a: Voxelize rim mesh (thickened inward) into the grid.
+    # The rim surface at R > rim_clip_r is loaded from the mesh produced by
+    # extract_rim.py, thickened inward by PAN_THICKNESS, and merged into the
+    # solid grid.  Pad pockets (5b) and hardware holes (7) carve through it.
+    print("\nPhase 5a: Rim voxelization...")
+    rim_path = 'data/drum_rim.obj'
+    from pathlib import Path as PathLib
+    if PathLib(rim_path).exists():
+        from generate_quarter import compute_face_normals as _cfn
+        rim_verts, rim_faces = [], []
+        with open(rim_path) as rf:
+            for line in rf:
+                if line.startswith('v '):
+                    p = line.split()
+                    rim_verts.append([float(p[1]), float(p[2]), float(p[3])])
+                elif line.startswith('f '):
+                    face = [int(tok.split('/')[0]) - 1 for tok in line.split()[1:]]
+                    rim_faces.append(face)
+        rim_verts = np.array(rim_verts)
+        # Triangulate quads
+        rim_tris = []
+        for face in rim_faces:
+            for i in range(1, len(face) - 1):
+                rim_tris.append([face[0], face[i], face[i + 1]])
+        rim_tris_arr = np.array(rim_tris)
+        rim_normals = _cfn(rim_verts, rim_tris)
+
+        # For each triangle, compute bounding box and fill voxels that are
+        # within PAN_THICKNESS inward from the surface.
+        n_rim_filled = 0
+        thickness = PAN_THICKNESS
+        for ti in range(len(rim_tris)):
+            tri = rim_tris_arr[ti]
+            v0, v1, v2 = rim_verts[tri[0]], rim_verts[tri[1]], rim_verts[tri[2]]
+            n = rim_normals[ti]
+            nl = np.linalg.norm(n)
+            if nl < 1e-10:
+                continue
+            n = n / nl
+            # Ensure normal points inward (toward drum center)
+            centroid = (v0 + v1 + v2) / 3.0
+            r_cent = math.sqrt(centroid[0]**2 + centroid[2]**2)
+            radial_dir = np.array([centroid[0], 0, centroid[2]])
+            radial_dir_n = np.linalg.norm(radial_dir)
+            if radial_dir_n > 0:
+                radial_dir /= radial_dir_n
+            # If normal points outward (same direction as radial), flip it
+            if np.dot(n, radial_dir) > 0:
+                n = -n
+
+            # Bounding box of the triangle + thickness sweep
+            all_pts = np.array([v0, v1, v2,
+                                v0 + n * thickness,
+                                v1 + n * thickness,
+                                v2 + n * thickness])
+            bb_min = all_pts.min(axis=0)
+            bb_max = all_pts.max(axis=0)
+
+            ix_lo = max(0, int((bb_min[0] - x_range[0]) / res) - 1)
+            ix_hi = min(nx - 1, int((bb_max[0] - x_range[0]) / res) + 2)
+            iy_lo = max(0, int((bb_min[1] - y_range[0]) / res) - 1)
+            iy_hi = min(ny - 1, int((bb_max[1] - y_range[0]) / res) + 2)
+            iz_lo = max(0, int((bb_min[2] - z_range[0]) / res) - 1)
+            iz_hi = min(nz - 1, int((bb_max[2] - z_range[0]) / res) + 2)
+
+            # Triangle edges for barycentric test
+            e0 = v1 - v0
+            e1 = v2 - v0
+            d00 = np.dot(e0, e0)
+            d01 = np.dot(e0, e1)
+            d11 = np.dot(e1, e1)
+            denom = d00 * d11 - d01 * d01
+            if abs(denom) < 1e-12:
+                continue
+
+            for ix in range(ix_lo, ix_hi + 1):
+                px = x_range[ix]
+                for iz in range(iz_lo, iz_hi + 1):
+                    pz = z_range[iz]
+                    for iy in range(iy_lo, iy_hi + 1):
+                        if grid[ix, iy, iz] == 1:
+                            continue
+                        py = y_range[iy]
+                        p = np.array([px, py, pz])
+                        # Signed distance from triangle plane
+                        dp = p - v0
+                        dist = np.dot(dp, n)
+                        if dist < -res or dist > thickness + res:
+                            continue
+                        # Project onto triangle plane
+                        proj = p - dist * n
+                        dp2 = proj - v0
+                        d20 = np.dot(dp2, e0)
+                        d21 = np.dot(dp2, e1)
+                        u = (d11 * d20 - d01 * d21) / denom
+                        v = (d00 * d21 - d01 * d20) / denom
+                        # Inside triangle with small margin
+                        margin = res / max(np.linalg.norm(e0), np.linalg.norm(e1), 1.0)
+                        if u >= -margin and v >= -margin and (u + v) <= 1.0 + margin:
+                            grid[ix, iy, iz] = 1
+                            n_rim_filled += 1
+
+        print(f"  {len(rim_tris)} rim triangles, {n_rim_filled} voxels added "
+              f"({thickness}mm inward)")
+    else:
+        print(f"  {rim_path} not found — run extract_rim.py first")
 
     # Phase 5b: Carve pad pockets from assembly_view Pad footprints
     # Ensures ALL pads (including inner) get proper indentations
