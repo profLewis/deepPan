@@ -184,26 +184,17 @@ def main():
     grid = d['body']
     base_grid = d['base']
     piece_xz = d['piece_xz']
-    iy_top_map = d['iy_top_map']
-    iy_base_top_cyl = int(d['iy_base_top_cyl'][0])
     x_range = d['x_range']
     y_range = d['y_range']
     z_range = d['z_range']
     res = float(d['res'][0])
     nx, ny, nz = grid.shape
     print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M voxels, res={res}mm")
-    print(f"  piece_xz: {piece_xz.shape}, iy_base_top_cyl={iy_base_top_cyl}")
+    print(f"  piece_xz: {piece_xz.shape}")
 
     tag = f'_{res}mm' if res != 0.5 else ''
     if use_sdf:
         tag += '_sdf'
-
-    # Build 3D structure range mask (for piece extraction)
-    print("\nBuilding structure range...")
-    iy_idx = np.arange(ny)[np.newaxis, :, np.newaxis]
-    iy_top_3d = iy_top_map[:, np.newaxis, :]
-    in_range = (iy_idx >= iy_base_top_cyl) & (iy_idx < iy_top_3d)
-    del iy_idx, iy_top_3d
 
     # ── Extract base plate ────────────────────────────────────────
     print("\n── Base plate ──")
@@ -217,9 +208,9 @@ def main():
                    verts_base, faces_base)
         print(f"  -> pan_base{tag}.obj/stl ({len(faces_base)} tri)")
 
-    # ── Extract central piece ─────────────────────────────────────
+    # ── Extract central piece (R<125: surface + structure) ────────
     print("\n── Central piece ──")
-    mask = in_range & (piece_xz[:, np.newaxis, :] == 1)
+    mask = (piece_xz[:, np.newaxis, :] == 1)
     central_grid = np.where(mask, grid, np.uint8(0))
     del mask; gc.collect()
     verts_central, faces_central = _crop_and_extract(
@@ -233,12 +224,12 @@ def main():
                    verts_central, faces_central)
         print(f"  -> pan_central_piece{tag}.obj/stl ({len(faces_central)} tri)")
 
-    # ── Extract outer pieces (6) ──────────────────────────────────
+    # ── Extract outer pieces (6 x 60deg: pads + surface + struts) ─
     outer_meshes = []
     for sector in range(N_STRUTS):
         piece_id = 2 + sector
         print(f"\n── Outer piece {sector} ──")
-        mask = in_range & (piece_xz[:, np.newaxis, :] == piece_id)
+        mask = (piece_xz[:, np.newaxis, :] == piece_id)
         piece_grid = np.where(mask, grid, np.uint8(0))
         del mask; gc.collect()
         v, f = _crop_and_extract(
@@ -253,27 +244,11 @@ def main():
                        f'STL outer piece {sector}', v, f)
             print(f"  -> pan_outer_piece_{sector}{tag}.obj/stl ({len(f)} tri)")
 
-    # ── Extract drum body (without structure) ─────────────────────
-    print("\n── Drum body ──")
-    body_struct = in_range & (piece_xz[:, np.newaxis, :] > 0)
-    grid[body_struct] = 0
-    del body_struct, in_range, piece_xz, iy_top_map
-    gc.collect()
-    verts_body, faces_body = _crop_and_extract(
-        grid, x_range, y_range, z_range, res, use_sdf, sigma, "DrumBody")
-    del grid; gc.collect()
-    if verts_body is not None:
-        _write_obj(f'data/pan_drum{tag}.obj', 'Drum body',
-                   verts_body, faces_body, 'DrumBody')
-        _write_stl(f'data/pan_drum{tag}.stl', 'STL drum body',
-                   verts_body, faces_body)
-        print(f"  -> pan_drum{tag}.obj/stl ({len(faces_body)} tri)")
+    del grid, piece_xz; gc.collect()
 
     # ── Combined OBJ ──────────────────────────────────────────────
     print(f"\n── Combined OBJ: pan_body{tag}.obj ──")
     all_pieces = []
-    if verts_body is not None:
-        all_pieces.append(('DrumBody', verts_body, faces_body))
     if verts_central is not None:
         all_pieces.append(('CentralPiece', verts_central, faces_central))
     for sector in range(N_STRUTS):
@@ -284,7 +259,7 @@ def main():
         all_pieces.append(('BasePlate', verts_base, faces_base))
 
     with open(f'data/pan_body{tag}.obj', 'w') as fout:
-        fout.write("# Pan body + structure + base plate\n# Units: mm\n\n")
+        fout.write("# Pan pieces + base plate\n# Units: mm\n\n")
         vert_off = 0
         for obj_name, verts, faces in all_pieces:
             fout.write(f"o {obj_name}\n")
@@ -298,16 +273,20 @@ def main():
     total_tri = sum(len(f) for _, _, f in all_pieces)
     print(f"  {len(all_pieces)} objects, {total_tri} tri total")
 
-    # ── Combined STL (body + base) ────────────────────────────────
-    if verts_body is not None and verts_base is not None:
-        n_body = len(verts_body)
-        all_verts = np.vstack([verts_body, verts_base])
-        all_faces = (list(faces_body) +
-                     [[f[0]+n_body, f[1]+n_body, f[2]+n_body]
-                      for f in faces_base])
+    # ── Combined STL ──────────────────────────────────────────────
+    if all_pieces:
+        all_verts_list, all_faces_list = [], []
+        vert_off = 0
+        for _, v, f in all_pieces:
+            all_verts_list.append(v)
+            all_faces_list.extend(
+                [[tri[0]+vert_off, tri[1]+vert_off, tri[2]+vert_off]
+                 for tri in f])
+            vert_off += len(v)
+        all_verts = np.vstack(all_verts_list)
         _write_stl(f'data/pan_body{tag}.stl', 'STL pan body',
-                   all_verts, all_faces)
-        print(f"  pan_body{tag}.stl ({len(all_faces)} tri, body+base)")
+                   all_verts, all_faces_list)
+        print(f"  pan_body{tag}.stl ({len(all_faces_list)} tri, combined)")
 
     print("\nDone!")
 

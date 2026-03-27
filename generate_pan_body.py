@@ -535,25 +535,27 @@ def main():
     print(f"  Added {n_struct / 1e6:.1f}M structural voxels")
 
     # ── Phase 6c: Piece assignment (central + 6 outer) ───────────────
+    # Assigns ALL grid columns (not just structure) so each piece includes
+    # the drum body surface, pads, grooves, and structural support together.
     print("\nPhase 6c: Piece assignment...")
-    # piece_xz: 0=not structure, 1=central, 2..7=outer pieces 0..5
+    # piece_xz: 0=outside drum, 1=central, 2..7=outer pieces 0..5
     piece_xz = np.zeros((nx, nz), dtype=np.uint8)
     ANGLES = np.arctan2(ZZ, XX)
     key_half_arc = KEY_WIDTH / (2.0 * CYL_SPLIT_R)
+    within_drum = RR <= drum_r
 
-    # Step 1: Central piece (R < split, structural)
-    inner_struct = (RR < CYL_SPLIT_R) & struct_xz
-    piece_xz[inner_struct] = 1
+    # Step 1: Central piece (R < split, within drum)
+    inner_all = (RR < CYL_SPLIT_R) & within_drum
+    piece_xz[inner_all] = 1
 
-    # Step 2: Default sector for outer structural voxels
-    outer_struct = (RR >= CYL_SPLIT_R) & struct_xz
+    # Step 2: Default sector for all outer columns
+    outer_all = (RR >= CYL_SPLIT_R) & within_drum
     a_shifted = (ANGLES - STRUT_ANGLES_RAD[0]) % (2 * np.pi)
     default_sector = (a_shifted / (np.pi / 3)).astype(np.int32) % N_STRUTS
-    piece_xz[outer_struct] = (2 + default_sector[outer_struct]).astype(np.uint8)
+    piece_xz[outer_all] = (2 + default_sector[outer_all]).astype(np.uint8)
 
     # Step 3: Radial key override (near split radius, at strut angles)
-    radial_key_zone = ((RR >= CYL_SPLIT_R - KEY_DEPTH) & (RR < CYL_SPLIT_R)
-                       & struct_xz)
+    radial_key_zone = (RR >= CYL_SPLIT_R - KEY_DEPTH) & (RR < CYL_SPLIT_R)
     for si in range(N_STRUTS):
         sa = STRUT_ANGLES_RAD[si]
         angle_diff = (ANGLES - sa + np.pi) % (2 * np.pi) - np.pi
@@ -563,7 +565,7 @@ def main():
 
     # Step 4: Side key/slot override on strut edges
     for si in range(N_STRUTS):
-        in_this_strut = strut_in[si] & outer_struct
+        in_this_strut = strut_in[si] & outer_all
         t = strut_tang[si]
         # At strut[si]: t < KEY_DEPTH -> sector (si-1)%6, else sector si
         key_side = in_this_strut & (t < KEY_DEPTH)
@@ -575,9 +577,9 @@ def main():
     n_outer = int((piece_xz >= 2).sum())
     print(f"  Central: {n_central} columns, Outer: {n_outer} columns")
 
-    del (cyl_xz, strut_xz, strut_in, strut_tang, struct_xz, inner_struct,
-         outer_struct, a_shifted, default_sector, radial_key_zone, ANGLES,
-         RR, RR_sq, XX, ZZ)
+    del (cyl_xz, strut_xz, strut_in, strut_tang, struct_xz, inner_all,
+         outer_all, within_drum, a_shifted, default_sector, radial_key_zone,
+         ANGLES, RR, RR_sq, XX, ZZ)
     gc.collect()
 
     # ── Phase 6d: Wiring holes ───────────────────────────────────────
@@ -939,45 +941,35 @@ def main():
             for face in faces:
                 f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
 
-    # Phase 10: Extract structural pieces via piece_xz assignment
-    # Use 3D structure mask for vectorized extraction
+    # Phase 10: Extract pieces — each includes drum surface + structure
+    # piece_xz covers the full grid, so each piece gets its sector of the
+    # playing surface, pads, grooves, AND structural support together.
     print("\nPhase 10: Extract meshes...")
-    iy_idx = np.arange(ny)[np.newaxis, :, np.newaxis]
-    iy_top_3d = iy_top_map[:, np.newaxis, :]
-    in_range = (iy_idx >= iy_base_top_cyl) & (iy_idx < iy_top_3d)
-    del iy_idx, iy_top_3d
 
-    # Phase 10a: Central piece
+    # Phase 10a: Central piece (R < 125mm: inner surface + cylinder hub + struts)
     print("\nPhase 10a: Central piece mesh...")
-    mask = in_range & (piece_xz[:, np.newaxis, :] == 1)
+    mask = (piece_xz[:, np.newaxis, :] == 1)
     central_grid = np.where(mask, grid, np.uint8(0))
     del mask
     verts_central, faces_central = _extract_mesh(central_grid, "CentralPiece")
     del central_grid; gc.collect()
 
-    # Phase 10b: Outer pieces (6)
+    # Phase 10b: Outer pieces (6 x 60deg wedge with pads + struts)
     outer_meshes = []
     for sector in range(N_STRUTS):
         piece_id = 2 + sector
         print(f"\nPhase 10b.{sector}: Outer piece {sector}...")
-        mask = in_range & (piece_xz[:, np.newaxis, :] == piece_id)
+        mask = (piece_xz[:, np.newaxis, :] == piece_id)
         piece_grid = np.where(mask, grid, np.uint8(0))
         del mask
         v, f = _extract_mesh(piece_grid, f"OuterPiece_{sector}")
         outer_meshes.append((v, f))
         del piece_grid; gc.collect()
 
-    # Phase 10c: Body WITHOUT structure
-    print("\nPhase 10c: Body mesh (without structure)...")
-    body_struct = in_range & (piece_xz[:, np.newaxis, :] > 0)
-    grid[body_struct] = 0
-    del body_struct, in_range, piece_xz, iy_top_map
-    gc.collect()
-    verts_body, faces_body = _extract_mesh(grid, "DrumBody")
-    del grid; gc.collect()
+    del piece_xz, iy_top_map, grid; gc.collect()
 
-    # Phase 10d: Base plate
-    print("\nPhase 10d: Base plate mesh...")
+    # Phase 10c: Base plate
+    print("\nPhase 10c: Base plate mesh...")
     verts_base, faces_base = _extract_mesh(base_grid, "BasePlate")
     del base_grid; gc.collect()
 
@@ -986,17 +978,10 @@ def main():
 
     # Combined OBJ with all named objects
     with open(f'data/pan_body{tag}.obj', 'w') as f:
-        f.write("# Pan body + structure + base plate\n# Units: mm\n\n")
+        f.write("# Pan pieces + base plate\n# Units: mm\n\n")
         vert_off = 0
 
-        f.write("o DrumBody\n")
-        for v in verts_body:
-            f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
-        for face in faces_body:
-            f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
-        vert_off += len(verts_body)
-
-        f.write(f"\no CentralPiece\n")
+        f.write("o CentralPiece\n")
         for v in verts_central:
             f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
         for face in faces_central:
@@ -1017,12 +1002,9 @@ def main():
             f.write(f"v {v[0]:.3f} {v[1]:.3f} {v[2]:.3f}\n")
         for face in faces_base:
             f.write(f"f {face[0]+1+vert_off} {face[1]+1+vert_off} {face[2]+1+vert_off}\n")
-    print(f"  pan_body{tag}.obj (DrumBody + CentralPiece + OuterPiece_0..5 + BasePlate)")
+    print(f"  pan_body{tag}.obj (CentralPiece + OuterPiece_0..5 + BasePlate)")
 
     # Separate OBJ files
-    _write_obj(f'data/pan_drum{tag}.obj', 'Drum body', verts_body, faces_body, 'DrumBody')
-    print(f"  pan_drum{tag}.obj")
-
     _write_obj(f'data/pan_base{tag}.obj', 'Base plate', verts_base, faces_base, 'BasePlate')
     print(f"  pan_base{tag}.obj")
 
@@ -1037,9 +1019,6 @@ def main():
         print(f"  pan_outer_piece_{sector}{tag}.obj")
 
     # STL files
-    _write_stl(f'data/pan_drum{tag}.stl', 'STL drum body', verts_body, faces_body)
-    print(f"  pan_drum{tag}.stl ({len(faces_body)} tri)")
-
     _write_stl(f'data/pan_base{tag}.stl', 'STL base plate', verts_base, faces_base)
     print(f"  pan_base{tag}.stl ({len(faces_base)} tri)")
 
@@ -1053,13 +1032,21 @@ def main():
                    f'STL outer piece {sector}', v_out, f_out)
         print(f"  pan_outer_piece_{sector}{tag}.stl ({len(f_out)} tri)")
 
-    # Combined STL (body + base)
-    n_body = len(verts_body)
-    all_verts = np.vstack([verts_body, verts_base])
-    all_faces = list(faces_body) + [[f[0] + n_body, f[1] + n_body, f[2] + n_body]
-                                     for f in faces_base]
-    _write_stl(f'data/pan_body{tag}.stl', 'STL pan body', all_verts, all_faces)
-    print(f"  pan_body{tag}.stl ({len(all_faces)} tri, combined)")
+    # Combined STL (all pieces + base)
+    all_meshes = [(verts_central, faces_central)]
+    for v_out, f_out in outer_meshes:
+        all_meshes.append((v_out, f_out))
+    all_meshes.append((verts_base, faces_base))
+    all_verts_list, all_faces_list = [], []
+    vert_off = 0
+    for v, f in all_meshes:
+        all_verts_list.append(v)
+        all_faces_list.extend([[tri[0]+vert_off, tri[1]+vert_off, tri[2]+vert_off]
+                               for tri in f])
+        vert_off += len(v)
+    all_verts = np.vstack(all_verts_list)
+    _write_stl(f'data/pan_body{tag}.stl', 'STL pan body', all_verts, all_faces_list)
+    print(f"  pan_body{tag}.stl ({len(all_faces_list)} tri, combined)")
     print("\nDone!")
 
 
