@@ -69,58 +69,19 @@ def main():
     R_level = compute_leveling_rotation(obj_path)
     bowl_v = (R_level @ bowl_v.T).T
 
-    # Phase 3: Classify rim — all faces at R > DRUM_WALL_RADIUS,
-    # including the rounded rim edge. On the inner edge (where the rim
-    # curves into the playing surface), cut at the outer-pad top Y level
-    # so the rim doesn't interfere with pad pockets / hardware holes.
-    print("\nPhase 3: Classify rim...")
-    from generate_quarter import DRUM_WALL_RADIUS, compute_face_normals
-
-    # Find outer pad top Y from assembly view
-    a_verts_list = []
-    a_objs = {}
-    a_cur = None
-    with open('data/notepads/assembly_view.obj') as af:
-        for line in af:
-            line = line.strip()
-            if line.startswith('v '):
-                p = line.split()
-                a_verts_list.append([float(p[1]), float(p[2]), float(p[3])])
-            elif line.startswith('o '):
-                a_cur = line[2:]
-                a_objs[a_cur] = set()
-            elif line.startswith('f ') and a_cur:
-                for p in line.split()[1:]:
-                    try:
-                        a_objs[a_cur].add(int(p.split('/')[0]) - 1)
-                    except ValueError:
-                        pass
-    a_verts_arr = np.array(a_verts_list)
-    pad_y_top = max(
-        float(a_verts_arr[sorted(vis)][:, 1].max())
-        for name, vis in a_objs.items() if name.startswith('Pad_O'))
-    print(f"  Outer pad top Y = {pad_y_top:.2f}mm")
-
-    normals = compute_face_normals(bowl_v, bowl_f)
+    # Phase 3: Classify rim — all faces at R > DRUM_WALL_RADIUS.
+    # Includes the full cylindrical skirt, the rolled top edge, and the
+    # transition curve inward to where the playing surface / outer pads
+    # begin. The R=225mm boundary gives a clean circular inner cutoff.
+    print("\nPhase 3: Classify rim (R > 225mm)...")
+    from generate_quarter import DRUM_WALL_RADIUS
     dw_faces = []
-    n_cut = 0
     for fi, face in enumerate(bowl_f):
         fc = bowl_v[face].mean(axis=0)
         r = math.sqrt(fc[0]**2 + fc[2]**2)
-        if r <= DRUM_WALL_RADIUS:
-            continue
-        # Drum wall (steep normal) — keep regardless of Y
-        ny = abs(normals[fi][1])
-        if ny < 0.5:
+        if r > DRUM_WALL_RADIUS:
             dw_faces.append(bowl_f[fi])
-            continue
-        # Rounded edge face — only keep if all vertices are above pad top Y
-        verts_y = bowl_v[face][:, 1]
-        if verts_y.min() >= pad_y_top:
-            dw_faces.append(bowl_f[fi])
-        else:
-            n_cut += 1
-    print(f"  {len(dw_faces)} rim faces kept, {n_cut} inner-edge faces cut at Y={pad_y_top:.1f}")
+    print(f"  {len(dw_faces)} rim faces (wall + rolled edge + transition)")
 
     if not dw_faces:
         print("  No drum wall faces found!")
