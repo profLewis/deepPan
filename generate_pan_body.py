@@ -480,14 +480,15 @@ def main():
               f"R=[{r_heightmap[r_heightmap > 0].min():.1f}, {r_heightmap.max():.1f}]mm")
 
         # Fill grid: for each voxel column (ix, iz), look up R_surface
-        # at (theta, y) and fill if R_surface - thickness <= R <= R_surface.
-        thickness = PAN_THICKNESS
+        # at (theta, y) and fill if rim_inner <= R <= R_surface.
+        # The inner edge connects to the body fill (at rim_clip_r) with
+        # 1mm overlap so the wall is seamlessly joined to the body.
+        rim_inner = rim_clip_r - 1.0  # 1mm overlap with body fill
         n_rim_filled = 0
         XX_rim, ZZ_rim = np.meshgrid(x_range, z_range, indexing='ij')
         RR_rim = np.sqrt(XX_rim**2 + ZZ_rim**2)
         THETA_rim = np.arctan2(ZZ_rim, XX_rim)
-        # Only process columns in the rim area (R > rim_clip_r - thickness)
-        rim_cols = RR_rim > (rim_clip_r - thickness)
+        rim_cols = RR_rim > rim_inner
         del XX_rim, ZZ_rim
 
         for ix in range(nx):
@@ -496,7 +497,6 @@ def main():
                     continue
                 r_col = RR_rim[ix, iz]
                 theta_col = THETA_rim[ix, iz]
-                # Theta bin index
                 ti = int((theta_col - theta_edges[0]) /
                          (theta_edges[1] - theta_edges[0]))
                 ti = ti % n_theta_bins
@@ -505,18 +505,18 @@ def main():
                     if grid[ix, iy, iz] == 1:
                         continue
                     y_val = y_range[iy]
-                    # Y bin index
                     yi = int((y_val - y_edges[0]) / (y_edges[1] - y_edges[0]))
                     yi = min(max(yi, 0), n_y_bins - 1)
                     r_surf = r_heightmap[ti, yi]
                     if r_surf <= 0:
                         continue
-                    if r_surf - thickness <= r_col <= r_surf:
+                    if rim_inner <= r_col <= r_surf:
                         grid[ix, iy, iz] = 1
                         n_rim_filled += 1
 
         del RR_rim, THETA_rim, rim_cols, r_heightmap
-        print(f"  {n_rim_filled} rim voxels added ({thickness}mm inward, smooth)")
+        print(f"  {n_rim_filled} rim voxels added "
+              f"(R=[{rim_inner:.0f}..surface], smooth wall)")
 
         # Cap at rim_y
         iy_global_cap = min(ny, int((rim_y - y_range[0]) / res))
