@@ -508,13 +508,16 @@ def main():
     cyl_xz = (RR_sq >= CYL_INNER_R**2) & (RR_sq <= CYL_OUTER_R**2)
 
     # Strut footprints (20mm wide walls from center to drum edge)
+    # Each strut only claims the "forward" half (radial >= 0) so that
+    # opposite struts (e.g. 15° and 195°) don't fight over the same voxels.
     strut_tang = np.zeros((N_STRUTS, nx, nz), dtype=np.float32)
     strut_in = np.zeros((N_STRUTS, nx, nz), dtype=bool)
     for si, sa in enumerate(STRUT_ANGLES_RAD):
         cos_a = math.cos(sa)
         sin_a = math.sin(sa)
         strut_tang[si] = (-XX * sin_a + ZZ * cos_a).astype(np.float32)
-        strut_in[si] = np.abs(strut_tang[si]) <= STRUT_HALF_W
+        strut_radial = XX * cos_a + ZZ * sin_a
+        strut_in[si] = (np.abs(strut_tang[si]) <= STRUT_HALF_W) & (strut_radial >= 0)
     strut_xz = strut_in.any(axis=0) & (RR <= drum_r)
     struct_xz = cyl_xz | strut_xz
 
