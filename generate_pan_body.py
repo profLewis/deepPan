@@ -574,7 +574,7 @@ def main():
                     if 0 <= iy_groove < iy_ceil:
                         n_groove_carved += int(grid[ix_abs, iy_groove:iy_ceil, iz_abs].sum())
                         grid[ix_abs, iy_groove:iy_ceil, iz_abs] = 0
-    print(f"  Carved {n_groove_carved / 1e6:.1f}M groove voxels from {len(groove_top_surfaces)} grooves")
+        print(f"  Carved {n_groove_carved / 1e6:.1f}M groove voxels from {len(groove_top_surfaces)} grooves")
 
     # Phase 6: Carve wiring void
     # Cylinder: radius = drum_r - VOID_INSET, height = VOID_HEIGHT
