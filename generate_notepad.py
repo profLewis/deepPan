@@ -1388,16 +1388,12 @@ def generate_notepad(note_index, obj_path, output_dir,
         tgt_centroid = target_pan_verts.mean(axis=0)
 
         if ring == 'outer':
-            # Outer ring: rotate around the drum axis through drum center.
-            # The drum axis in source coords is found via R_level (which
-            # rotates the drum axis to +Y). So drum_axis = R_level^T @ [0,1,0].
+            # Outer ring: rotate around the drum axis through an optimized
+            # center that minimizes angular spacing and radius variance for
+            # the 12 outer pads (not the raw Pan centroid which is off-center).
             import json as _cj
-            _off_path = Path("data/pan_centroid_offset.json")
-            if _off_path.exists():
-                with open(_off_path) as _of:
-                    _drum_center = np.array(_cj.load(_of)["centroid_offset_mm"])
-            else:
-                _drum_center = np.zeros(3)
+            # Optimized rotation center (in raw mm coords)
+            _drum_center = np.array([0.2240, 798.5343, 4.0704])
             _R_level = compute_leveling_rotation(obj_path)
             drum_axis = _R_level.T @ np.array([0, 1, 0])  # drum axis in source coords
             drum_axis /= np.linalg.norm(drum_axis)
