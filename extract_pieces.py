@@ -80,10 +80,25 @@ def _sdf_extract(padded, res, sigma):
     return verts, faces
 
 
+def _downsample_grid(grid, factor):
+    """Downsample a 3D grid by factor using max pooling (preserves solid)."""
+    sx, sy, sz = grid.shape
+    # Trim to multiple of factor
+    nx = (sx // factor) * factor
+    ny = (sy // factor) * factor
+    nz = (sz // factor) * factor
+    trimmed = grid[:nx, :ny, :nz]
+    # Reshape and take max along pooling dims
+    reshaped = trimmed.reshape(nx // factor, factor,
+                               ny // factor, factor,
+                               nz // factor, factor)
+    return reshaped.max(axis=(1, 3, 5)).astype(np.uint8)
+
+
 def _crop_and_extract(grid_full, x_range, y_range, z_range, res, use_sdf,
-                      sigma, label):
-    """Crop a grid to its non-zero bounding box, extract mesh, return
-    world-space vertices and faces."""
+                      sigma, label, downsample=1):
+    """Crop a grid to its non-zero bounding box, optionally downsample,
+    extract mesh, return world-space vertices and faces."""
     # Find bounding box of non-zero voxels
     nz_x, nz_y, nz_z = np.nonzero(grid_full)
     if len(nz_x) == 0:
@@ -101,21 +116,31 @@ def _crop_and_extract(grid_full, x_range, y_range, z_range, res, use_sdf,
           f"{shape[0]}x{shape[1]}x{shape[2]} "
           f"({shape[0]*shape[1]*shape[2]/1e6:.0f}M voxels, {n_vox/1e6:.1f}M solid)")
 
+    # Downsample if requested (e.g., 0.1mm grid -> 0.2mm SDF with factor=2)
+    extract_res = res
+    if downsample > 1:
+        crop = _downsample_grid(crop, downsample)
+        extract_res = res * downsample
+        ds_shape = crop.shape
+        print(f"    Downsampled {downsample}x -> {ds_shape[0]}x{ds_shape[1]}x{ds_shape[2]} "
+              f"({ds_shape[0]*ds_shape[1]*ds_shape[2]/1e6:.0f}M, res={extract_res}mm)")
+
     # Pad and extract
     padded = np.pad(crop, 1, mode='constant', constant_values=0)
     del crop; gc.collect()
 
     if use_sdf:
-        verts, faces = _sdf_extract(padded, res, sigma)
+        verts, faces = _sdf_extract(padded, extract_res, sigma)
     else:
         verts, faces, _, _ = marching_cubes(padded, level=0.5,
-                                            spacing=(res, res, res))
+                                            spacing=(extract_res, extract_res,
+                                                     extract_res))
     del padded; gc.collect()
 
     # Offset to world coordinates (crop origin + padding offset)
-    verts[:, 0] += x_range[ix0] - res
-    verts[:, 1] += y_range[iy0] - res
-    verts[:, 2] += z_range[iz0] - res
+    verts[:, 0] += x_range[ix0] - extract_res
+    verts[:, 1] += y_range[iy0] - extract_res
+    verts[:, 2] += z_range[iz0] - extract_res
     print(f"    {len(verts)}v, {len(faces)}f")
     return verts, faces
 
@@ -153,11 +178,14 @@ def main():
     grid_path = None
     sigma = 0.5
     use_sdf = True
+    downsample = 1
     for arg in sys.argv[1:]:
         if arg.startswith('--grid='):
             grid_path = arg.split('=', 1)[1]
         elif arg.startswith('--sigma='):
             sigma = float(arg.split('=')[1])
+        elif arg.startswith('--downsample='):
+            downsample = int(arg.split('=')[1])
         elif arg == '--no-sdf':
             use_sdf = False
 
@@ -192,14 +220,18 @@ def main():
     print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M voxels, res={res}mm")
     print(f"  piece_xz: {piece_xz.shape}")
 
-    tag = f'_{res}mm' if res != 0.5 else ''
+    effective_res = res * downsample if downsample > 1 else res
+    tag = f'_{effective_res}mm' if effective_res != 0.5 else ''
+    if downsample > 1:
+        print(f"  Downsample: {downsample}x (grid {res}mm -> extract {effective_res}mm)")
     if use_sdf:
         tag += '_sdf'
 
     # ── Extract base plate ────────────────────────────────────────
     print("\n── Base plate ──")
     verts_base, faces_base = _crop_and_extract(
-        base_grid, x_range, y_range, z_range, res, use_sdf, sigma, "BasePlate")
+        base_grid, x_range, y_range, z_range, res, use_sdf, sigma, "BasePlate",
+        downsample=downsample)
     del base_grid; gc.collect()
     if verts_base is not None:
         _write_obj(f'data/pan_base{tag}.obj', 'Base plate',
@@ -215,7 +247,7 @@ def main():
     del mask; gc.collect()
     verts_central, faces_central = _crop_and_extract(
         central_grid, x_range, y_range, z_range, res, use_sdf, sigma,
-        "CentralPiece")
+        "CentralPiece", downsample=downsample)
     del central_grid; gc.collect()
     if verts_central is not None:
         _write_obj(f'data/pan_central_piece{tag}.obj', 'Central piece',
@@ -234,7 +266,7 @@ def main():
         del mask; gc.collect()
         v, f = _crop_and_extract(
             piece_grid, x_range, y_range, z_range, res, use_sdf, sigma,
-            f"OuterPiece_{sector}")
+            f"OuterPiece_{sector}", downsample=downsample)
         del piece_grid; gc.collect()
         outer_meshes.append((v, f))
         if v is not None:
