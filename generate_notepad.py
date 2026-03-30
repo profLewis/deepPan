@@ -91,7 +91,7 @@ SMALL_MIN_PAD_SIZE = CENTRAL_MIN_PAD_SIZE
 
 # M2 through-hole parameters (holes through full pad thickness)
 SCREW_HOLE_DIAMETER = 2.2     # M2 clearance hole (2.2mm for M2 bolt)
-SCREW_HOLE_INSET = 7.0        # Distance inset from pad boundary
+SCREW_HOLE_INSET = 8.0        # Distance inset from pad boundary
 SCREW_HOLE_SEGMENTS = 16      # Resolution for hole cylinders
 SCREW_HOLE_COUNT = 4          # Number of holes per pad
 
@@ -1888,13 +1888,13 @@ def generate_notepad(note_index, obj_path, output_dir,
         # the pad, reject any too close to the edge or the hardware zone,
         # then greedily pick well-separated positions.
         if ring == 'inner':
-            MIN_EDGE_DIST = 4.0   # mm from pad boundary
-            MIN_HW_DIST = 1.5     # mm from nearest hardware edge
+            MIN_EDGE_DIST = 5.0   # mm from pad boundary
+            MIN_HW_DIST = 2.5     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 2         # 2 screws for inner pads
         else:
-            MIN_EDGE_DIST = 5.0   # mm from pad boundary
-            MIN_HW_DIST = 3.0     # mm from nearest hardware edge
+            MIN_EDGE_DIST = 6.0   # mm from pad boundary
+            MIN_HW_DIST = 4.0     # mm from nearest hardware edge
             MIN_HOLE_SEP = 10.0   # mm between holes
             MAX_HOLES = 4
 
@@ -1922,7 +1922,7 @@ def generate_notepad(note_index, obj_path, output_dir,
             if _have_boundary:
                 bvi = max(loops, key=len)
                 bpts = pan_verts[bvi]
-                MIN_EDGE_DIST = 4.0   # relaxed — groove extends beyond pad
+                MIN_EDGE_DIST = 5.0   # relaxed — groove extends beyond pad
                 print(f"  Using pad boundary with relaxed edge dist ({MIN_EDGE_DIST}mm, groove attached)")
         else:
             be = find_boundary_edges(pan_faces)

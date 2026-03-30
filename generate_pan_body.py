@@ -20,6 +20,7 @@ Usage:
     --sigma=X      Gaussian smoothing sigma in voxels (implies --sdf, default 0.5)
     --save-grid    Save binary grids to .npz for fast re-extraction
     --grid-only    Save grid and skip mesh extraction (use extract_pieces.py later)
+    --no-pads      Skip pad pockets, grooves, pad screws (structure-only model)
 """
 
 import numpy as np
@@ -150,6 +151,7 @@ def main():
     sigma = 0.0
     save_grid = '--save-grid' in sys.argv
     grid_only = '--grid-only' in sys.argv  # save grid and skip extraction
+    no_pads = '--no-pads' in sys.argv      # skip pad pockets/grooves/screws
     for arg in sys.argv[1:]:
         if arg.startswith('--res='):
             res = float(arg.split('=')[1])
@@ -479,103 +481,99 @@ def main():
 
     # Phase 5b: Carve pad pockets from assembly_view Pad footprints
     # Ensures ALL pads (including inner) get proper indentations
-    print("\nPhase 5b: Assembly pad pockets...")
-    n_pocketed = 0
-    for note in sorted(NOTE_BY_INDEX.keys()):
-        pd_key = f'Pad_{note}'
-        if pd_key not in a_objects:
-            continue
-        pv = a_verts[sorted(a_objects[pd_key])]
-        pad_xz = pv[:, [0, 2]]
-        pad_y_top = float(pv[:, 1].max())
-        pocket_floor_y = pad_y_top - POCKET_DEPTH - GROOVE_STEP
-
-        try:
-            hull = ConvexHull(pad_xz)
-            pad_poly = Polygon(pad_xz[hull.vertices])
-            # Add tolerance so pad fits easily
-            pad_poly_buffered = pad_poly.buffer(POCKET_TOLERANCE)
-            if pad_poly_buffered.geom_type == 'Polygon':
-                pad_path = MplPath(np.array(pad_poly_buffered.exterior.coords))
-            else:
-                pad_path = MplPath(pad_xz[hull.vertices])
-        except:
-            continue
-
-        bounds = pad_path.get_extents()
-        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
-        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
-        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
-        if n_ix <= 0 or n_iz <= 0:
-            continue
-
-        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
-                             z_range[iz_min:iz_max + 1], indexing='ij')
-        inside = pad_path.contains_points(
-            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
-
-        iy_floor = max(0, int((pocket_floor_y - y_range[0]) / res))
-        iy_top_pad = min(ny, int((pad_y_top - y_range[0]) / res) + 2)
-
-        for di in range(n_ix):
-            for dj in range(n_iz):
-                if inside[di, dj]:
-                    ix_g = ix_min + di
-                    iz_g = iz_min + dj
-                    # Use local column top to determine carve top: if the body
-                    # surface is above pad_y_top (common for inner pads), carve
-                    # up to the surface so the pocket is properly visible.
-                    iy_top_local = iy_top_pad
-                    if 0 <= ix_g < nx and 0 <= iz_g < nz:
-                        iy_col = int(iy_top[ix_g, iz_g])
-                        iy_top_local = max(iy_top_local, iy_col)
-                    grid[ix_g, iy_floor:iy_top_local, iz_g] = 0
-                    n_pocketed += 1
-    print(f"  Pocketed {n_pocketed} columns for {len(NOTE_BY_INDEX)} pads")
+    if no_pads:
+        print("\nPhase 5b: SKIPPED (--no-pads)")
+    else:
+        print("\nPhase 5b: Assembly pad pockets...")
+        n_pocketed = 0
+        for note in sorted(NOTE_BY_INDEX.keys()):
+            pd_key = f'Pad_{note}'
+            if pd_key not in a_objects:
+                continue
+            pv = a_verts[sorted(a_objects[pd_key])]
+            pad_xz = pv[:, [0, 2]]
+            pad_y_top = float(pv[:, 1].max())
+            pocket_floor_y = pad_y_top - POCKET_DEPTH - GROOVE_STEP
+            try:
+                hull = ConvexHull(pad_xz)
+                pad_poly = Polygon(pad_xz[hull.vertices])
+                pad_poly_buffered = pad_poly.buffer(POCKET_TOLERANCE)
+                if pad_poly_buffered.geom_type == 'Polygon':
+                    pad_path = MplPath(np.array(pad_poly_buffered.exterior.coords))
+                else:
+                    pad_path = MplPath(pad_xz[hull.vertices])
+            except Exception:
+                continue
+            bounds = pad_path.get_extents()
+            ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
+            ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
+            iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
+            iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
+            n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
+            if n_ix <= 0 or n_iz <= 0:
+                continue
+            TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
+                                 z_range[iz_min:iz_max + 1], indexing='ij')
+            inside = pad_path.contains_points(
+                np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
+            iy_floor = max(0, int((pocket_floor_y - y_range[0]) / res))
+            iy_top_pad = min(ny, int((pad_y_top - y_range[0]) / res) + 2)
+            for di in range(n_ix):
+                for dj in range(n_iz):
+                    if inside[di, dj]:
+                        ix_g = ix_min + di
+                        iz_g = iz_min + dj
+                        iy_top_local = iy_top_pad
+                        if 0 <= ix_g < nx and 0 <= iz_g < nz:
+                            iy_col = int(iy_top[ix_g, iz_g])
+                            iy_top_local = max(iy_top_local, iy_col)
+                        grid[ix_g, iy_floor:iy_top_local, iz_g] = 0
+                        n_pocketed += 1
+        print(f"  Pocketed {n_pocketed} columns for {len(NOTE_BY_INDEX)} pads")
 
     # Phase 5c: Carve groove channels into surface
-    print("\nPhase 5c: Groove channels...")
-    n_groove_carved = 0
-    for note_key, top_verts in groove_top_surfaces.items():
-        if len(top_verts) < 3:
-            continue
-        gxz = top_verts[:, [0, 2]]
-        gy = top_verts[:, 1]
-        gx_min, gz_min = gxz.min(axis=0)
-        gx_max, gz_max = gxz.max(axis=0)
-        ix_lo = max(0, int((gx_min - x_range[0]) / res) - 1)
-        ix_hi = min(nx - 1, int((gx_max - x_range[0]) / res) + 2)
-        iz_lo = max(0, int((gz_min - z_range[0]) / res) - 1)
-        iz_hi = min(nz - 1, int((gz_max - z_range[0]) / res) + 2)
-        n_gix = ix_hi - ix_lo + 1
-        n_giz = iz_hi - iz_lo + 1
-        if n_gix <= 0 or n_giz <= 0:
-            continue
-        GX, GZ = np.meshgrid(x_range[ix_lo:ix_hi + 1],
-                              z_range[iz_lo:iz_hi + 1], indexing='ij')
-        groove_y_map = griddata(gxz, gy, (GX, GZ), method='linear')
-        try:
-            ghull = ConvexHull(gxz)
-            gpath = MplPath(gxz[ghull.vertices])
-            g_inside = gpath.contains_points(
-                np.column_stack([GX.ravel(), GZ.ravel()])).reshape(n_gix, n_giz)
-        except Exception:
-            continue
-        for di in range(n_gix):
-            for dj in range(n_giz):
-                if not g_inside[di, dj] or np.isnan(groove_y_map[di, dj]):
-                    continue
-                groove_surf_y = groove_y_map[di, dj]
-                iy_groove = int((groove_surf_y - y_range[0]) / res) + 1
-                ix_abs = ix_lo + di
-                iz_abs = iz_lo + dj
-                # Only carve up to original surface (iy_top), not through drum wall
-                iy_ceil = iy_top[ix_abs, iz_abs]
-                if 0 <= iy_groove < iy_ceil:
-                    n_groove_carved += int(grid[ix_abs, iy_groove:iy_ceil, iz_abs].sum())
-                    grid[ix_abs, iy_groove:iy_ceil, iz_abs] = 0
+    if no_pads:
+        print("\nPhase 5c: SKIPPED (--no-pads)")
+    else:
+        print("\nPhase 5c: Groove channels...")
+        n_groove_carved = 0
+        for note_key, top_verts in groove_top_surfaces.items():
+            if len(top_verts) < 3:
+                continue
+            gxz = top_verts[:, [0, 2]]
+            gy = top_verts[:, 1]
+            gx_min, gz_min = gxz.min(axis=0)
+            gx_max, gz_max = gxz.max(axis=0)
+            ix_lo = max(0, int((gx_min - x_range[0]) / res) - 1)
+            ix_hi = min(nx - 1, int((gx_max - x_range[0]) / res) + 2)
+            iz_lo = max(0, int((gz_min - z_range[0]) / res) - 1)
+            iz_hi = min(nz - 1, int((gz_max - z_range[0]) / res) + 2)
+            n_gix = ix_hi - ix_lo + 1
+            n_giz = iz_hi - iz_lo + 1
+            if n_gix <= 0 or n_giz <= 0:
+                continue
+            GX, GZ = np.meshgrid(x_range[ix_lo:ix_hi + 1],
+                                  z_range[iz_lo:iz_hi + 1], indexing='ij')
+            groove_y_map = griddata(gxz, gy, (GX, GZ), method='linear')
+            try:
+                ghull = ConvexHull(gxz)
+                gpath = MplPath(gxz[ghull.vertices])
+                g_inside = gpath.contains_points(
+                    np.column_stack([GX.ravel(), GZ.ravel()])).reshape(n_gix, n_giz)
+            except Exception:
+                continue
+            for di in range(n_gix):
+                for dj in range(n_giz):
+                    if not g_inside[di, dj] or np.isnan(groove_y_map[di, dj]):
+                        continue
+                    groove_surf_y = groove_y_map[di, dj]
+                    iy_groove = int((groove_surf_y - y_range[0]) / res) + 1
+                    ix_abs = ix_lo + di
+                    iz_abs = iz_lo + dj
+                    iy_ceil = iy_top[ix_abs, iz_abs]
+                    if 0 <= iy_groove < iy_ceil:
+                        n_groove_carved += int(grid[ix_abs, iy_groove:iy_ceil, iz_abs].sum())
+                        grid[ix_abs, iy_groove:iy_ceil, iz_abs] = 0
     print(f"  Carved {n_groove_carved / 1e6:.1f}M groove voxels from {len(groove_top_surfaces)} grooves")
 
     # Phase 6: Carve wiring void
@@ -902,39 +900,37 @@ def main():
         print(f"  No bounding ellipses file found ({bc_path})")
 
     # Phase 8: Pad screw holes — pilot + countersink taper + plug bore
-    # Profile from pocket floor downward:
-    #   plug bore (CSINK_TOP_R, CSINK_PLUG_DEPTH) → taper (CSINK_TOP_R→PILOT_R, CSINK_TAPER_DEPTH) → pilot (PILOT_R)
-    print("\nPhase 8: Pad screw holes + countersink + plug bore...")
-    total_csink = CSINK_PLUG_DEPTH + CSINK_TAPER_DEPTH
-    for hx, hy, hz in screw_holes:
-        ix_min = max(0, int((hx - CSINK_TOP_R - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((hx + CSINK_TOP_R - x_range[0]) / res) + 2)
-        iz_min = max(0, int((hz - CSINK_TOP_R - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((hz + CSINK_TOP_R - z_range[0]) / res) + 2)
-        pocket_floor = hy - POCKET_DEPTH
-        iy_top = int((pocket_floor - y_range[0]) / res) + 1
-        iy_bot = max(0, int((pocket_floor - PILOT_DEPTH - y_range[0]) / res))
-        for ix in range(ix_min, ix_max + 1):
-            dx = x_range[ix] - hx
-            for iz in range(iz_min, iz_max + 1):
-                dz = z_range[iz] - hz
-                r_sq = dx * dx + dz * dz
-                if r_sq <= PILOT_R * PILOT_R:
-                    # Cylindrical pilot hole — full depth
-                    grid[ix, iy_bot:iy_top, iz] = 0
-                elif r_sq <= CSINK_TOP_R * CSINK_TOP_R:
-                    r = math.sqrt(r_sq)
-                    # Plug bore: top CSINK_PLUG_DEPTH at full CSINK_TOP_R
-                    plug_depth = CSINK_PLUG_DEPTH
-                    # Taper: from CSINK_TOP_R down to PILOT_R
-                    if r <= PILOT_R:
-                        taper_extra = CSINK_TAPER_DEPTH
-                    else:
-                        taper_extra = CSINK_TAPER_DEPTH * (CSINK_TOP_R - r) / (CSINK_TOP_R - PILOT_R)
-                    max_depth = plug_depth + taper_extra
-                    iy_cone_bot = max(iy_bot, int((pocket_floor - max_depth - y_range[0]) / res))
-                    grid[ix, iy_cone_bot:iy_top, iz] = 0
-    print(f"  {len(screw_holes)} holes ({PILOT_R*2}mm pilot + {CSINK_TOP_R*2}mm csink + {CSINK_PLUG_DEPTH}mm bore)")
+    if no_pads:
+        print("\nPhase 8: SKIPPED (--no-pads)")
+    else:
+        print("\nPhase 8: Pad screw holes + countersink + plug bore...")
+        total_csink = CSINK_PLUG_DEPTH + CSINK_TAPER_DEPTH
+        for hx, hy, hz in screw_holes:
+            ix_min = max(0, int((hx - CSINK_TOP_R - x_range[0]) / res) - 1)
+            ix_max = min(nx - 1, int((hx + CSINK_TOP_R - x_range[0]) / res) + 2)
+            iz_min = max(0, int((hz - CSINK_TOP_R - z_range[0]) / res) - 1)
+            iz_max = min(nz - 1, int((hz + CSINK_TOP_R - z_range[0]) / res) + 2)
+            pocket_floor = hy - POCKET_DEPTH
+            iy_top = int((pocket_floor - y_range[0]) / res) + 1
+            iy_bot = max(0, int((pocket_floor - PILOT_DEPTH - y_range[0]) / res))
+            for ix in range(ix_min, ix_max + 1):
+                dx = x_range[ix] - hx
+                for iz in range(iz_min, iz_max + 1):
+                    dz = z_range[iz] - hz
+                    r_sq = dx * dx + dz * dz
+                    if r_sq <= PILOT_R * PILOT_R:
+                        grid[ix, iy_bot:iy_top, iz] = 0
+                    elif r_sq <= CSINK_TOP_R * CSINK_TOP_R:
+                        r = math.sqrt(r_sq)
+                        plug_depth = CSINK_PLUG_DEPTH
+                        if r <= PILOT_R:
+                            taper_extra = CSINK_TAPER_DEPTH
+                        else:
+                            taper_extra = CSINK_TAPER_DEPTH * (CSINK_TOP_R - r) / (CSINK_TOP_R - PILOT_R)
+                        max_depth = plug_depth + taper_extra
+                        iy_cone_bot = max(iy_bot, int((pocket_floor - max_depth - y_range[0]) / res))
+                        grid[ix, iy_cone_bot:iy_top, iz] = 0
+        print(f"  {len(screw_holes)} holes ({PILOT_R*2}mm pilot + {CSINK_TOP_R*2}mm csink + {CSINK_PLUG_DEPTH}mm bore)")
 
     # Phase 8b: Base attachment screw holes
     # M3 pilot holes in drum body (tapped), clearance holes in base plate
@@ -967,78 +963,6 @@ def main():
     n_final = int(grid.sum())
     print(f"  {BASE_SCREW_N} base screws at R={base_screw_r:.0f}mm")
 
-    # Phase 8c: Final cleanup — single pass re-carving pad pockets and
-    # hardware holes after all structural additions.  Uses correct bounds:
-    #   Pads:   pocket_floor to pad_y_top (not full object volume)
-    #   HW:     base_top upward, skipping R > rim_clip_r (wall preserved)
-    print("\nPhase 8c: Final pad/hardware cleanup...")
-    iy_base_top_8c = int((y_min + BASE_THICKNESS - y_range[0]) / res) + 1
-    n_cleanup = 0
-    # Re-carve pad pockets
-    for note in sorted(NOTE_BY_INDEX.keys()):
-        pd_key = f'Pad_{note}'
-        if pd_key not in a_objects:
-            continue
-        pv = a_verts[sorted(a_objects[pd_key])]
-        pad_xz = pv[:, [0, 2]]
-        pad_y_top = float(pv[:, 1].max())
-        pocket_floor_y = pad_y_top - POCKET_DEPTH - GROOVE_STEP
-        try:
-            hull = ConvexHull(pad_xz)
-            pad_poly = Polygon(pad_xz[hull.vertices])
-            pad_poly_buffered = pad_poly.buffer(POCKET_TOLERANCE)
-            if pad_poly_buffered.geom_type == 'Polygon':
-                pad_path = MplPath(np.array(pad_poly_buffered.exterior.coords))
-            else:
-                pad_path = MplPath(pad_xz[hull.vertices])
-        except Exception:
-            continue
-        bounds = pad_path.get_extents()
-        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
-        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
-        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
-        if n_ix <= 0 or n_iz <= 0:
-            continue
-        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
-                             z_range[iz_min:iz_max + 1], indexing='ij')
-        inside = pad_path.contains_points(
-            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
-        iy_floor = max(0, int((pocket_floor_y - y_range[0]) / res))
-        iy_top_pad = min(ny, int((pad_y_top - y_range[0]) / res) + 2)
-        for di in range(n_ix):
-            for dj in range(n_iz):
-                if inside[di, dj]:
-                    ix_g = ix_min + di
-                    iz_g = iz_min + dj
-                    n_cleanup += int(grid[ix_g, iy_floor:iy_top_pad, iz_g].sum())
-                    grid[ix_g, iy_floor:iy_top_pad, iz_g] = 0
-    # Re-carve hardware holes (with wall preservation)
-    for note, path in hw_shapes.items():
-        bounds = path.get_extents()
-        ix_min = max(0, int((bounds.x0 - x_range[0]) / res) - 1)
-        ix_max = min(nx - 1, int((bounds.x1 - x_range[0]) / res) + 2)
-        iz_min = max(0, int((bounds.y0 - z_range[0]) / res) - 1)
-        iz_max = min(nz - 1, int((bounds.y1 - z_range[0]) / res) + 2)
-        n_ix, n_iz = ix_max - ix_min + 1, iz_max - iz_min + 1
-        if n_ix <= 0 or n_iz <= 0:
-            continue
-        TX, TZ = np.meshgrid(x_range[ix_min:ix_max + 1],
-                             z_range[iz_min:iz_max + 1], indexing='ij')
-        inside = path.contains_points(
-            np.column_stack([TX.ravel(), TZ.ravel()])).reshape(n_ix, n_iz)
-        for di in range(n_ix):
-            for dj in range(n_iz):
-                if inside[di, dj]:
-                    ix_g = ix_min + di
-                    iz_g = iz_min + dj
-                    r_col = math.sqrt(x_range[ix_g]**2 + z_range[iz_g]**2)
-                    if r_col > rim_clip_r:
-                        continue
-                    n_cleanup += int(grid[ix_g, iy_base_top_8c:, iz_g].sum())
-                    grid[ix_g, iy_base_top_8c:, iz_g] = 0
-    print(f"  Cleaned {n_cleanup} voxels")
     print(f"  Final body: {int(grid.sum()) / 1e6:.0f}M voxels")
 
     # Phase 9: Separate base plate
