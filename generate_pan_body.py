@@ -394,16 +394,12 @@ def main():
     print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm")
     del bowl_r, bowl_theta, surface_r_map, grid_theta
 
+    # NaN columns inside the drum (beyond interpolation range) default to rim_y.
+    # No wall_region override — the heightmap covers the pad area naturally.
     height_map[np.isnan(height_map) & inside_drum] = rim_y
-    # Force drum wall region (R > rim_clip_r) to rim_y regardless of
-    # interpolation.  The heightmap is unreliable in the drum wall but
-    # valid for the playing surface/pad area (R < rim_clip_r).
-    wall_region = RR > rim_clip_r
-    height_map[wall_region & inside_drum] = rim_y
     col_top = np.full((nx, nz), y_min)
     valid = ~np.isnan(height_map) & inside_drum
     col_top[valid] = height_map[valid]
-    del wall_region
     iy_top = np.clip(((col_top - y_range[0]) / res).astype(np.int32) + 1, 0, ny)
 
     # Compute void ceiling: original surface Y - VOID_CLEARANCE per column
@@ -429,67 +425,8 @@ def main():
     n_solid = int(grid.sum())
     print(f"  {n_solid / 1e6:.0f}M voxels")
 
-    # Phase 5a: Trim rim top to follow actual curved profile.
-    # The solid fill (Phase 5) already creates the cylindrical wall
-    # correctly (y_min to rim_y) at the full surface_r_map boundary.
-    # But it uses a flat rim_y ceiling for the drum wall area.  Here we
-    # load the rim mesh and compute a per-column max-Y from the mesh
-    # vertices, then trim the grid so the top follows the actual curved
-    # rim profile instead of a flat line.
-    print("\nPhase 5a: Rim top profile trim...")
-    rim_path = 'data/drum_rim.obj'
-    from pathlib import Path as PathLib
-    if PathLib(rim_path).exists():
-        rim_verts_list = []
-        with open(rim_path) as rf:
-            for line in rf:
-                if line.startswith('v '):
-                    p = line.split()
-                    rim_verts_list.append([float(p[1]), float(p[2]), float(p[3])])
-        rim_verts = np.array(rim_verts_list)
-        rim_rv = np.sqrt(rim_verts[:, 0]**2 + rim_verts[:, 2]**2)
-        print(f"  {len(rim_verts)} rim vertices, R=[{rim_rv.min():.1f}, {rim_rv.max():.1f}]")
-
-        # Build per-column max-Y from rim mesh vertices.
-        # For each grid column (ix, iz), find the max Y of rim vertices
-        # that are nearby, giving the actual rim surface height.
-        rim_y_cap = np.full((nx, nz), rim_y)  # default to flat rim_y
-        spread = max(2, int(2.0 / res))  # spread in grid cells (~2mm)
-        for vi in range(len(rim_verts)):
-            ix_v = int((rim_verts[vi, 0] - x_range[0]) / res + 0.5)
-            iz_v = int((rim_verts[vi, 2] - z_range[0]) / res + 0.5)
-            for dix in range(-spread, spread + 1):
-                for diz in range(-spread, spread + 1):
-                    ixx = ix_v + dix
-                    izz = iz_v + diz
-                    if 0 <= ixx < nx and 0 <= izz < nz:
-                        if rim_verts[vi, 1] > rim_y_cap[ixx, izz]:
-                            rim_y_cap[ixx, izz] = rim_verts[vi, 1]
-
-        # Smooth the cap to avoid discretisation steps
-        from scipy.ndimage import uniform_filter
-        rim_y_cap = uniform_filter(rim_y_cap, size=max(3, int(2.0 / res)))
-
-        # Trim: for columns in the rim area (R > rim_clip_r), cap the grid
-        # height at the rim surface instead of flat rim_y
-        n_trimmed = 0
-        XX_5a, ZZ_5a = np.meshgrid(x_range, z_range, indexing='ij')
-        RR_5a = np.sqrt(XX_5a**2 + ZZ_5a**2)
-        del XX_5a, ZZ_5a
-        for ix in range(nx):
-            for iz in range(nz):
-                if RR_5a[ix, iz] <= rim_clip_r:
-                    continue
-                yc = rim_y_cap[ix, iz]
-                iy_cap = min(ny, int((yc - y_range[0]) / res))
-                n_above = int(grid[ix, iy_cap:, iz].sum())
-                if n_above > 0:
-                    grid[ix, iy_cap:, iz] = 0
-                    n_trimmed += n_above
-        del RR_5a, rim_y_cap
-        print(f"  Trimmed {n_trimmed} voxels above rim profile")
-    else:
-        print(f"  {rim_path} not found — run extract_rim.py first")
+    # (Phase 5a removed — no rim trim needed; heightmap + surface_r_map
+    # define the boundary naturally without wall_region overrides.)
 
     # Phase 5b: Carve pad pockets from assembly_view Pad footprints
     # Ensures ALL pads (including inner) get proper indentations
@@ -829,13 +766,7 @@ def main():
         for di in range(n_ix):
             for dj in range(n_iz):
                 if inside[di, dj]:
-                    ix_g = ix_min + di
-                    iz_g = iz_min + dj
-                    # Skip columns in the drum wall (R > rim_clip_r)
-                    r_col = math.sqrt(x_range[ix_g]**2 + z_range[iz_g]**2)
-                    if r_col > rim_clip_r:
-                        continue
-                    grid[ix_g, iy_base_top:, iz_g] = 0
+                    grid[ix_min + di, iy_base_top:, iz_min + dj] = 0
     n_after = int(grid.sum())
     print(f"  {n_after / 1e6:.0f}M voxels")
 
