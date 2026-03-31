@@ -363,36 +363,9 @@ def main():
     height_map = griddata(ps_v[:, [0, 2]], surface_y, (XI, ZI), method='linear')
     RR = np.sqrt(XI**2 + ZI**2)
 
-    # Compute per-angle max R from ALL bowl vertices so the drum wall is
-    # thickened inward (fill stops at the actual surface, not at drum_r).
-    print("  Computing radial boundary...")
-    bowl_r = np.sqrt(bowl_v[:, 0]**2 + bowl_v[:, 2]**2)
-    bowl_theta = np.arctan2(bowl_v[:, 2], bowl_v[:, 0])
-    n_bins = 3600  # 0.1 degree resolution for smooth circumference
-    angle_bins = np.linspace(-np.pi, np.pi, n_bins + 1)
-    r_max_per_bin = np.full(n_bins, 0.0)
-    for bi in range(n_bins):
-        mask = (bowl_theta >= angle_bins[bi]) & (bowl_theta < angle_bins[bi + 1])
-        if mask.any():
-            r_max_per_bin[bi] = bowl_r[mask].max()
-    # Fill empty bins from neighbors
-    for bi in range(n_bins):
-        if r_max_per_bin[bi] == 0:
-            r_max_per_bin[bi] = r_max_per_bin[bi - 1]
-    # Smooth the radial profile to enforce a clean circumference
-    from scipy.ndimage import uniform_filter1d
-    r_max_per_bin = uniform_filter1d(r_max_per_bin, size=max(3, n_bins // 120),
-                                     mode='wrap')
-    bin_centers = 0.5 * (angle_bins[:-1] + angle_bins[1:])
-    grid_theta = np.arctan2(ZI, XI)
-    surface_r_map = np.interp(grid_theta.ravel(), bin_centers, r_max_per_bin,
-                              period=2 * np.pi).reshape(grid_theta.shape)
-    # Fill boundary: use full surface_r_map (no rim_clip_r clipping).
-    # The solid fill creates the cylindrical wall correctly (y_min to rim_y).
-    # Phase 5a will refine the TOP profile with the actual curved rim shape.
-    inside_drum = RR <= surface_r_map
-    print(f"  Surface R: [{surface_r_map.min():.1f}, {surface_r_map.max():.1f}]mm")
-    del bowl_r, bowl_theta, surface_r_map, grid_theta
+    # Simple circular boundary at drum_r
+    inside_drum = RR <= drum_r
+    print(f"  Fill boundary: R <= {drum_r:.1f}mm (circle)")
 
     # NaN columns inside the drum (beyond interpolation range) default to rim_y.
     # No wall_region override — the heightmap covers the pad area naturally.
