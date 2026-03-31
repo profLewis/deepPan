@@ -23,20 +23,27 @@ from skimage.measure import marching_cubes
 from generate_cylinders import N_STRUTS
 
 
-def _sdf_extract(padded, res, sigma):
-    """SDF-based mesh extraction from padded binary grid."""
+def _sdf_extract(padded, spacing, sigma):
+    """SDF-based mesh extraction from padded binary grid.
+
+    spacing: tuple (sx, sy, sz) or scalar for isotropic.
+    """
     from scipy.ndimage import distance_transform_edt, gaussian_filter
+    if isinstance(spacing, (int, float)):
+        spacing = (spacing, spacing, spacing)
     shape = padded.shape
     n_voxels = padded.size
     pb = padded.view(np.bool_)
+    # sampling parameter for anisotropic EDT
+    sampling = spacing
 
     if n_voxels < 2_000_000_000:
         print(f"    SDF in-memory ({n_voxels / 1e6:.0f}M voxels)...")
         print("    interior...")
-        sdf = distance_transform_edt(pb).astype(np.float32)
+        sdf = distance_transform_edt(pb, sampling=sampling).astype(np.float32)
         print("    exterior...")
         np.logical_not(pb, out=pb)
-        sdf -= distance_transform_edt(pb).astype(np.float32)
+        sdf -= distance_transform_edt(pb, sampling=sampling).astype(np.float32)
     else:
         import os, tempfile
         td = tempfile.mkdtemp(prefix='pan_sdf_')
@@ -45,7 +52,7 @@ def _sdf_extract(padded, res, sigma):
 
         print(f"    SDF disk-spill ({n_voxels / 1e9:.1f}B voxels)...")
         print("    interior...")
-        d = distance_transform_edt(pb)
+        d = distance_transform_edt(pb, sampling=sampling)
         with open(pin, 'wb') as f:
             for i in range(shape[0]):
                 f.write(d[i].astype(np.float32).tobytes())
@@ -53,7 +60,7 @@ def _sdf_extract(padded, res, sigma):
 
         print("    exterior...")
         np.logical_not(pb, out=pb)
-        d = distance_transform_edt(pb)
+        d = distance_transform_edt(pb, sampling=sampling)
         with open(pex, 'wb') as f:
             for i in range(shape[0]):
                 f.write(d[i].astype(np.float32).tobytes())
@@ -75,7 +82,7 @@ def _sdf_extract(padded, res, sigma):
         gaussian_filter(sdf, sigma=sigma, output=sdf)
 
     print("    marching cubes...")
-    verts, faces, _, _ = marching_cubes(sdf, level=0.0, spacing=(res, res, res))
+    verts, faces, _, _ = marching_cubes(sdf, level=0.0, spacing=spacing)
     del sdf; gc.collect()
     return verts, faces
 
@@ -96,7 +103,7 @@ def _downsample_grid(grid, factor):
 
 
 def _crop_and_extract(grid_full, x_range, y_range, z_range, res, use_sdf,
-                      sigma, label, downsample=1):
+                      sigma, label, downsample=1, spacing=None):
     """Crop a grid to its non-zero bounding box, optionally downsample,
     extract mesh, return world-space vertices and faces."""
     # Find bounding box of non-zero voxels
@@ -116,31 +123,38 @@ def _crop_and_extract(grid_full, x_range, y_range, z_range, res, use_sdf,
           f"{shape[0]}x{shape[1]}x{shape[2]} "
           f"({shape[0]*shape[1]*shape[2]/1e6:.0f}M voxels, {n_vox/1e6:.1f}M solid)")
 
+    # Compute per-axis spacing (supports anisotropic grids)
+    if spacing is None:
+        spacing = (res, res, res)
+    sp_x, sp_y, sp_z = spacing
+
     # Downsample if requested (e.g., 0.1mm grid -> 0.2mm SDF with factor=2)
-    extract_res = res
     if downsample > 1:
         crop = _downsample_grid(crop, downsample)
-        extract_res = res * downsample
+        sp_x *= downsample
+        sp_y *= downsample
+        sp_z *= downsample
         ds_shape = crop.shape
         print(f"    Downsampled {downsample}x -> {ds_shape[0]}x{ds_shape[1]}x{ds_shape[2]} "
-              f"({ds_shape[0]*ds_shape[1]*ds_shape[2]/1e6:.0f}M, res={extract_res}mm)")
+              f"({ds_shape[0]*ds_shape[1]*ds_shape[2]/1e6:.0f}M)")
+
+    extract_spacing = (sp_x, sp_y, sp_z)
 
     # Pad and extract
     padded = np.pad(crop, 1, mode='constant', constant_values=0)
     del crop; gc.collect()
 
     if use_sdf:
-        verts, faces = _sdf_extract(padded, extract_res, sigma)
+        verts, faces = _sdf_extract(padded, extract_spacing, sigma)
     else:
         verts, faces, _, _ = marching_cubes(padded, level=0.5,
-                                            spacing=(extract_res, extract_res,
-                                                     extract_res))
+                                            spacing=extract_spacing)
     del padded; gc.collect()
 
     # Offset to world coordinates (crop origin + padding offset)
-    verts[:, 0] += x_range[ix0] - extract_res
-    verts[:, 1] += y_range[iy0] - extract_res
-    verts[:, 2] += z_range[iz0] - extract_res
+    verts[:, 0] += x_range[ix0] - sp_x
+    verts[:, 1] += y_range[iy0] - sp_y
+    verts[:, 2] += z_range[iz0] - sp_z
     print(f"    {len(verts)}v, {len(faces)}f")
     return verts, faces
 
@@ -216,8 +230,17 @@ def main():
     y_range = d['y_range']
     z_range = d['z_range']
     res = float(d['res'][0])
+    # Detect anisotropic spacing from stored ranges
+    res_x = float(x_range[1] - x_range[0]) if len(x_range) > 1 else res
+    res_y = float(y_range[1] - y_range[0]) if len(y_range) > 1 else res
+    res_z = float(z_range[1] - z_range[0]) if len(z_range) > 1 else res
+    spacing = (res_x, res_y, res_z)
     nx, ny, nz = grid.shape
-    print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M voxels, res={res}mm")
+    if abs(res_y - res_x) > 0.001:
+        print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M voxels, "
+              f"XZ={res_x}mm Y={res_y}mm")
+    else:
+        print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M voxels, res={res}mm")
     print(f"  piece_xz: {piece_xz.shape}")
 
     effective_res = res * downsample if downsample > 1 else res
@@ -231,7 +254,7 @@ def main():
     print("\n── Base plate ──")
     verts_base, faces_base = _crop_and_extract(
         base_grid, x_range, y_range, z_range, res, use_sdf, sigma, "BasePlate",
-        downsample=downsample)
+        downsample=downsample, spacing=spacing)
     del base_grid; gc.collect()
     if verts_base is not None:
         _write_obj(f'data/pan_base{tag}.obj', 'Base plate',
@@ -247,7 +270,7 @@ def main():
     del mask; gc.collect()
     verts_central, faces_central = _crop_and_extract(
         central_grid, x_range, y_range, z_range, res, use_sdf, sigma,
-        "CentralPiece", downsample=downsample)
+        "CentralPiece", downsample=downsample, spacing=spacing)
     del central_grid; gc.collect()
     if verts_central is not None:
         _write_obj(f'data/pan_central_piece{tag}.obj', 'Central piece',
@@ -266,7 +289,7 @@ def main():
         del mask; gc.collect()
         v, f = _crop_and_extract(
             piece_grid, x_range, y_range, z_range, res, use_sdf, sigma,
-            f"OuterPiece_{sector}", downsample=downsample)
+            f"OuterPiece_{sector}", downsample=downsample, spacing=spacing)
         del piece_grid; gc.collect()
         outer_meshes.append((v, f))
         if v is not None:

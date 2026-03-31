@@ -21,6 +21,7 @@ Usage:
     --save-grid    Save binary grids to .npz for fast re-extraction
     --grid-only    Save grid and skip mesh extraction (use extract_pieces.py later)
     --no-pads      Skip pad pockets, grooves, pad screws (structure-only model)
+    --y-factor=N   Multiply Y resolution by N (e.g. --y-factor=4 for 4x finer Y)
 """
 
 import numpy as np
@@ -152,12 +153,15 @@ def main():
     save_grid = '--save-grid' in sys.argv
     grid_only = '--grid-only' in sys.argv  # save grid and skip extraction
     no_pads = '--no-pads' in sys.argv      # skip pad pockets/grooves/screws
+    y_factor = 1
     for arg in sys.argv[1:]:
         if arg.startswith('--res='):
             res = float(arg.split('=')[1])
         elif arg.startswith('--sigma='):
             sigma = float(arg.split('=')[1])
             use_sdf = True
+        elif arg.startswith('--y-factor='):
+            y_factor = int(arg.split('=')[1])
     if use_sdf and sigma == 0:
         sigma = 0.5
     if use_sdf:
@@ -343,11 +347,16 @@ def main():
             surface_y[i] -= POCKET_DEPTH
 
     margin = res * 2
+    y_res = res / y_factor
     x_range = np.arange(-drum_r - margin, drum_r + margin + res, res)
     z_range = np.arange(-drum_r - margin, drum_r + margin + res, res)
-    y_range = np.arange(y_min - margin, rim_y + margin + res, res)
+    y_range = np.arange(y_min - margin, rim_y + margin + y_res, y_res)
     nx, ny, nz = len(x_range), len(y_range), len(z_range)
-    print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M ({res}mm)")
+    if y_factor > 1:
+        print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M "
+              f"(XZ={res}mm, Y={y_res}mm, y_factor={y_factor})")
+    else:
+        print(f"  Grid: {nx}x{ny}x{nz} = {nx*ny*nz/1e6:.0f}M ({res}mm)")
 
     XI, ZI = np.meshgrid(x_range, z_range, indexing='ij')
     print("  Interpolating...")
