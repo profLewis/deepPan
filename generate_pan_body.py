@@ -940,14 +940,15 @@ def main():
 
     def _extract_mesh(voxel_grid, label):
         """Extract mesh from voxel grid via marching cubes (with optional SDF)."""
+        sp = (res, y_res, res)  # anisotropic spacing
         padded = np.pad(voxel_grid, 1, mode='constant', constant_values=0)
         if use_sdf:
-            v, f = _sdf_extract(padded, res, sigma)
+            v, f = _sdf_extract(padded, sp, sigma)
         else:
-            v, f, _, _ = marching_cubes(padded, level=0.5, spacing=(res, res, res))
+            v, f, _, _ = marching_cubes(padded, level=0.5, spacing=sp)
         del padded
         v[:, 0] += x_range[0] - res
-        v[:, 1] += y_range[0] - res
+        v[:, 1] += y_range[0] - y_res
         v[:, 2] += z_range[0] - res
         print(f"  {label}: {len(v)}v, {len(f)}f")
         return v, f
