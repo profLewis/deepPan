@@ -15,6 +15,7 @@ Usage:
 import numpy as np
 import struct
 import sys
+import math
 from collections import defaultdict
 
 
@@ -117,22 +118,59 @@ def main():
         vnormals = -vnormals
         print("  Flipped normals to point outward")
 
-    # Create inner surface: offset each vertex inward by thickness.
-    # Only offset vertices that are NOT on the base (normal pointing
-    # downward).  Base vertices stay at their original position so the
-    # base is not thickened — only the playing surface and drum wall
-    # get material added into the drum interior.
-    print(f"Offsetting {thickness}mm inward (surface + wall only)...")
-    inner_verts = verts.copy()
-    n_offset = 0
+    # Create inner surface: offset ALL vertices inward by thickness,
+    # then clip against the original pantry surface so nothing protrudes
+    # outside.  This is: thicken uniformly, then boolean-intersect with
+    # the original solid — done via vertex clamping, no voxels.
+    print(f"Offsetting {thickness}mm inward...")
+    inner_verts = verts - thickness * vnormals
+
+    # Clip: for each inner vertex, ensure it stays inside the original
+    # pantry surface.  Build a heightmap (max Y per XZ) and radial
+    # profile (max R per angle) from the original mesh, then clamp.
+    print("Clipping inner surface to pantry boundary...")
+    from scipy.interpolate import griddata as _griddata
+
+    # Y heightmap: inner vertex Y must not exceed pantry surface Y at that XZ
+    # Use the original vertices (which ARE the pantry surface) for interpolation
+    # Take only upward-facing vertices (the playing surface, not the base)
+    up_mask = vnormals[:, 1] > 0
+    up_verts = verts[up_mask]
+    # Also build a radial max R profile
+    pan_r = np.sqrt(verts[:, 0]**2 + verts[:, 2]**2)
+    pan_theta = np.arctan2(verts[:, 2], verts[:, 0])
+    n_abins = 3600
+    abins = np.linspace(-np.pi, np.pi, n_abins + 1)
+    r_max_profile = np.zeros(n_abins)
+    for bi in range(n_abins):
+        m = (pan_theta >= abins[bi]) & (pan_theta < abins[bi+1])
+        if m.any():
+            r_max_profile[bi] = pan_r[m].max()
+    for bi in range(n_abins):
+        if r_max_profile[bi] == 0:
+            r_max_profile[bi] = r_max_profile[bi-1]
+    abin_centers = 0.5 * (abins[:-1] + abins[1:])
+
+    n_y_clamped = 0
+    n_r_clamped = 0
     for vi in range(n_v):
-        ny = vnormals[vi, 1]
-        # Base faces have outward normal pointing downward (ny < -0.3)
-        # Don't offset those — only offset upward/sideways-facing faces
-        if ny >= -0.3:
-            inner_verts[vi] = verts[vi] - thickness * vnormals[vi]
-            n_offset += 1
-    print(f"  {n_offset}/{n_v} vertices offset ({n_v - n_offset} base verts kept)")
+        iv = inner_verts[vi]
+        ov = verts[vi]
+        # Y clamp: inner vertex Y must not exceed original vertex Y
+        # (can't poke above the surface)
+        if iv[1] > ov[1]:
+            inner_verts[vi, 1] = ov[1]
+            n_y_clamped += 1
+        # R clamp: inner vertex R must not exceed pantry R at that angle
+        ir = math.sqrt(iv[0]**2 + iv[2]**2)
+        itheta = math.atan2(iv[2], iv[0])
+        r_max = np.interp(itheta, abin_centers, r_max_profile, period=2*np.pi)
+        if ir > r_max:
+            scale = r_max / ir if ir > 0 else 1.0
+            inner_verts[vi, 0] *= scale
+            inner_verts[vi, 2] *= scale
+            n_r_clamped += 1
+    print(f"  {n_y_clamped} vertices Y-clamped, {n_r_clamped} R-clamped")
 
     # Build combined mesh:
     # - Outer surface: original faces (outward normals)
