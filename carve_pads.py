@@ -194,10 +194,12 @@ def main():
             print("  No geometry, skipping")
             continue
 
-        # Bounding box of the pad group (with margin)
+        # Bounding box of the pad group (with generous margin so pantry
+        # mesh around the pad is fully captured)
+        pad_margin = 5.0  # mm
         all_pts = np.array([p for tri in pad_tris for p in tri])
-        bb_min = all_pts.min(axis=0) - 2 * res
-        bb_max = all_pts.max(axis=0) + 2 * res
+        bb_min = all_pts.min(axis=0) - pad_margin
+        bb_max = all_pts.max(axis=0) + pad_margin
         print(f"  BBox: X=[{bb_min[0]:.1f},{bb_max[0]:.1f}] "
               f"Y=[{bb_min[1]:.1f},{bb_max[1]:.1f}] "
               f"Z=[{bb_min[2]:.1f},{bb_max[2]:.1f}]")
