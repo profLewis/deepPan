@@ -185,19 +185,51 @@ def main():
     for pi, (note, group_names) in enumerate(sorted(pad_groups.items())):
         print(f"\n[{pi+1}/{len(pad_groups)}] Carving {note} ({', '.join(group_names)})...")
 
-        # Collect all triangles for this pad group
+        # Collect all vertices for this pad group
         pad_tris = []
+        pad_all_verts = []
         for gname in group_names:
             faces = asm_objects[gname]
+            for face in faces:
+                for vi in face:
+                    pad_all_verts.append(asm_verts[vi])
             pad_tris.extend(tris_to_list(asm_verts, faces))
         if not pad_tris:
             print("  No geometry, skipping")
             continue
+        pad_all_verts = np.array(pad_all_verts)
 
-        # Bounding box of the pad group (with generous margin so pantry
-        # mesh around the pad is fully captured)
+        # Compute pad surface normal (average face normal of Pad_ object)
+        pad_faces = asm_objects.get(f'Pad_{note}', [])
+        pad_normal = np.array([0.0, -1.0, 0.0])  # default: downward
+        if pad_faces:
+            fn_sum = np.zeros(3)
+            for face in pad_faces:
+                if len(face) >= 3:
+                    v0 = asm_verts[face[0]]
+                    v1 = asm_verts[face[1]]
+                    v2 = asm_verts[face[2]]
+                    fn = np.cross(v1 - v0, v2 - v0)
+                    fn_sum += fn
+            fnl = np.linalg.norm(fn_sum)
+            if fnl > 0:
+                pad_normal = fn_sum / fnl
+            # Ensure normal points INTO the drum (generally downward / toward center)
+            pad_centroid = pad_all_verts.mean(axis=0)
+            if pad_normal[1] > 0:  # pointing upward = outward, flip
+                pad_normal = -pad_normal
+
+        # Extrude pad in the normal direction by shell thickness + margin
+        # so the carving cuts through the full 10mm thickened shell
+        extrude_depth = 15.0  # mm — exceeds shell thickness (10mm) + margin
+        extruded_pts = np.vstack([
+            pad_all_verts,
+            pad_all_verts + extrude_depth * pad_normal
+        ])
+
+        # Bounding box with generous margin
         pad_margin = 5.0  # mm
-        all_pts = np.array([p for tri in pad_tris for p in tri])
+        all_pts = extruded_pts
         bb_min = all_pts.min(axis=0) - pad_margin
         bb_max = all_pts.max(axis=0) + pad_margin
         print(f"  BBox: X=[{bb_min[0]:.1f},{bb_max[0]:.1f}] "
@@ -211,10 +243,39 @@ def main():
         lnx, lny, lnz = len(x_range), len(y_range), len(z_range)
         print(f"  Local grid: {lnx}x{lny}x{lnz} = {lnx*lny*lnz/1e6:.1f}M voxels")
 
-        # Voxelize the pad group
-        pad_grid = voxelize_tris_in_box(pad_tris, x_range, y_range, z_range)
+        # Voxelize the EXTRUDED pad: use pad XZ footprint, fill from
+        # pad surface along pad_normal by extrude_depth.
+        # This creates a volume that cuts through the full shell.
+        pad_grid = np.zeros((lnx, lny, lnz), dtype=np.uint8)
+        # Get pad XZ convex hull for footprint test
+        from scipy.spatial import ConvexHull
+        from matplotlib.path import Path as MplPath
+        pad_xz = pad_all_verts[:, [0, 2]]
+        try:
+            hull = ConvexHull(pad_xz)
+            pad_path = MplPath(pad_xz[hull.vertices])
+        except Exception:
+            print("  Can't compute pad hull, skipping")
+            continue
+        # For each XZ column in the pad footprint, fill along normal
+        pad_y_max = float(pad_all_verts[:, 1].max())
+        pad_y_min = float(pad_all_verts[:, 1].min())
+        # The extrusion goes from the pad's Y range down along normal
+        ext_y_top = pad_y_max + 1.0  # small margin above pad
+        ext_y_bot = pad_y_min + extrude_depth * pad_normal[1]  # normal is downward
+        y_lo_ext = min(ext_y_top, ext_y_bot)
+        y_hi_ext = max(ext_y_top, ext_y_bot)
+        for ix in range(lnx):
+            for iz in range(lnz):
+                px, pz = x_range[ix], z_range[iz]
+                if pad_path.contains_point([px, pz]):
+                    iy_lo = max(0, int((y_lo_ext - y_range[0]) / res))
+                    iy_hi = min(lny, int((y_hi_ext - y_range[0]) / res) + 1)
+                    if iy_hi > iy_lo:
+                        pad_grid[ix, iy_lo:iy_hi, iz] = 1
         n_pad_vox = int(pad_grid.sum())
-        print(f"  Pad voxels: {n_pad_vox/1e3:.0f}K")
+        print(f"  Extruded pad voxels: {n_pad_vox/1e3:.0f}K "
+              f"(Y=[{y_lo_ext:.1f},{y_hi_ext:.1f}], normal=[{pad_normal[0]:.2f},{pad_normal[1]:.2f},{pad_normal[2]:.2f}])")
 
         if n_pad_vox == 0:
             print("  Empty pad voxels, skipping")
