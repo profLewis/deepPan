@@ -542,6 +542,50 @@ def main():
     bbox_size = bbox_max - bbox_min
     print(f"\nBounding box: {bbox_size[0]:.1f} x {bbox_size[1]:.1f} x {bbox_size[2]:.1f} mm")
 
+    # Drill M2 through-holes in the cylinder (which is a watertight volume)
+    import trimesh
+    print("\nDrilling M2 through-holes in cylinder...")
+    tri_cyl = []
+    for f in cylinder_faces:
+        if len(f) == 3: tri_cyl.append(f)
+        elif len(f) == 4: tri_cyl.append([f[0],f[1],f[2]]); tri_cyl.append([f[0],f[2],f[3]])
+    cyl_mesh = trimesh.Trimesh(vertices=np.array(cylinder_verts),
+                                faces=np.array(tri_cyl), process=True)
+    cyl_mesh.merge_vertices(merge_tex=True, merge_norm=True)
+    trimesh.repair.fix_normals(cyl_mesh)
+    trimesh.repair.fill_holes(cyl_mesh)
+    trimesh.repair.fix_winding(cyl_mesh)
+    if not cyl_mesh.is_volume:
+        # Voxelize at high res to get a proper volume, then drill
+        print(f"  Cylinder not volume — voxelizing at 0.15mm...", end="", flush=True)
+        vox = cyl_mesh.voxelized(0.15)
+        cyl_mesh = vox.marching_cubes
+        cyl_mesh.apply_transform(vox.transform)
+        trimesh.repair.fix_normals(cyl_mesh)
+        print(" done")
+    print(f"  Cylinder: {len(cyl_mesh.faces)}f, vol={cyl_mesh.is_volume}")
+
+    M2_R = PCB_HOLE_DIAMETER / 2  # 1.1mm
+    half_grid = PCB_HOLE_GRID / 2
+    z_drill_top = 1.0   # above base top
+    z_drill_bot = -BASE_HEIGHT - PCB_BOSS_HEIGHT - 1.0  # below boss bottom
+    drill_len = z_drill_top - z_drill_bot
+    drill_mid = (z_drill_top + z_drill_bot) / 2
+
+    for cx, cy in [(-half_grid, -half_grid), (half_grid, -half_grid),
+                    (half_grid, half_grid), (-half_grid, half_grid)]:
+        drill = trimesh.creation.cylinder(radius=M2_R, height=drill_len, sections=32)
+        T = trimesh.transformations.translation_matrix([cx, cy, drill_mid])
+        drill.apply_transform(T)
+        try:
+            cyl_mesh = cyl_mesh.difference(drill, engine='manifold')
+        except Exception as e:
+            print(f"  WARNING: drill at ({cx},{cy}) failed: {e}")
+    print(f"  Drilled: {len(cyl_mesh.faces)}f, vol={cyl_mesh.is_volume}")
+
+    drilled_cyl_verts = np.array(cyl_mesh.vertices)
+    drilled_cyl_faces = [list(f) for f in cyl_mesh.faces]
+
     # Output
     output_dir = Path("data/mounts")
     output_dir.mkdir(exist_ok=True)
@@ -550,7 +594,7 @@ def main():
     stl_path = output_dir / "mount_base.stl"
 
     objects = [
-        ("Cylinder", cylinder_verts, cylinder_faces),
+        ("Cylinder", drilled_cyl_verts, drilled_cyl_faces),
         ("PCB_Mount", pcb_verts, pcb_faces),
     ]
 

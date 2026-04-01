@@ -44,12 +44,6 @@ SLIT_TOP_Z = 0.1                # Extends through the top cap (above z=0)
 SLIT_BOTTOM_Z = -(CAP_INSERTION_LENGTH - 1.0)  # Ends 1mm before boss exit
 SLIT_ANGLE = 0.0                # At angle = 0
 
-# ── Grip tabs (small nubs for finger grip) ───────────────────────────────
-GRIP_LENGTH = 4.0               # How far tabs extend outward
-GRIP_WIDTH = 6.0                # Circumferential width of each tab
-GRIP_THICKNESS = 2.5            # Vertical thickness
-GRIP_Z = -(CAP_INSERTION_LENGTH + 1.0)  # Just below boss exit
-GRIP_COUNT = 2                  # Two tabs, opposite sides (90° from slit)
 
 # ── Vertical PCB base plate ─────────────────────────────────────────────
 # Centre the plate vertically on the cap so PCB fits compactly under the pad.
@@ -72,7 +66,7 @@ PLATE_Y_OFFSET = -CAP_OUTER_DIAMETER / 2 + PLATE_THICKNESS / 2 + _GUSSET_DEPTH
 # PCB mounting — matches mount_base.py hole pattern
 PCB_HOLE_DIAMETER = 2.2         # M2 clearance (same as mount_base)
 PCB_BOSS_DIAMETER = 5.0         # Boss OD (same as mount_base)
-PCB_BOSS_HEIGHT = 3.5           # Boss protrusion reduced (plate is part of screw path)
+PCB_BOSS_HEIGHT = 4.6           # Boss protrusion (1.3× base 3.5mm for clearance)
 PCB_HOLE_GRID = 16.0            # Grid spacing (same as mount_base)
 BOSS_SEGMENTS = 16
 PCB_HOLE_GRID = 16.0            # Grid spacing (matches outer ring)
@@ -93,156 +87,97 @@ def push_thread_profile(phase, depth):
 
 
 def generate_push_cap():
-    """Generate push-cap cylinder with solid top, solid bottom, wire slit, and threads."""
-    vertices = []
-    faces = []
+    """Generate push-cap as a solid cylinder with pizza-slice slit cut out.
+
+    Uses trimesh boolean: build a solid cylinder, subtract a wedge for the
+    wire slit.  Thread ridges are added to the outer surface.
+    """
+    import trimesh
 
     outer_r = CAP_OUTER_DIAMETER / 2
-    inner_r = CAP_INNER_DIAMETER / 2
-
     slit_half_angle = math.atan2(SLIT_WIDTH / 2, outer_r)
 
-    def in_slit(seg_idx, z):
-        """Check if this segment/z is in the wire slit."""
-        if z > SLIT_TOP_Z or z < SLIT_BOTTOM_Z:
-            return False
-        angle = 2 * math.pi * seg_idx / SEGMENTS
-        diff = abs(angle - SLIT_ANGLE)
-        if diff > math.pi:
-            diff = 2 * math.pi - diff
-        return diff <= slit_half_angle
+    # ── Build solid cylinder (no hollow interior) ──
+    cap_cyl = trimesh.creation.cylinder(
+        radius=outer_r, height=CAP_TOTAL_LENGTH, sections=SEGMENTS)
+    # Default cylinder is centered at origin along Z — shift so top=0, bottom=-length
+    cap_cyl.apply_translation([0, 0, -CAP_TOTAL_LENGTH / 2])
 
+    # ── Create wedge for the wire slit ──
+    # Build a triangular prism manually (6 verts, 8 tris) for robust boolean.
+    slit_r = outer_r + CAP_THREAD_DEPTH + 1.0  # overshoot for clean cut
+    slit_z_top = SLIT_TOP_Z + 0.5   # overshoot above top cap
+    slit_z_bot = SLIT_BOTTOM_Z - 0.5  # overshoot below slit end
+
+    a1 = SLIT_ANGLE - slit_half_angle
+    a2 = SLIT_ANGLE + slit_half_angle
+    # 6 vertices: triangle at top and bottom of slit
+    wv = np.array([
+        [0.0, 0.0, slit_z_top],                                       # 0 center top
+        [slit_r * math.cos(a1), slit_r * math.sin(a1), slit_z_top],   # 1 right top
+        [slit_r * math.cos(a2), slit_r * math.sin(a2), slit_z_top],   # 2 left top
+        [0.0, 0.0, slit_z_bot],                                       # 3 center bot
+        [slit_r * math.cos(a1), slit_r * math.sin(a1), slit_z_bot],   # 4 right bot
+        [slit_r * math.cos(a2), slit_r * math.sin(a2), slit_z_bot],   # 5 left bot
+    ])
+    wf = np.array([
+        [0, 2, 1],       # top triangle
+        [3, 4, 5],       # bottom triangle
+        [0, 1, 4], [0, 4, 3],  # right face
+        [0, 3, 5], [0, 5, 2],  # left face
+        [1, 2, 5], [1, 5, 4],  # outer face
+    ])
+    wedge = trimesh.Trimesh(vertices=wv, faces=wf, process=True)
+    trimesh.repair.fix_normals(wedge)
+
+    # Subtract slit wedge from cylinder
+    try:
+        cap_cyl = cap_cyl.difference(wedge, engine='manifold')
+    except Exception as e:
+        print(f"  WARNING: slit boolean failed: {e}")
+
+    # ── Add thread ridges on the outer surface ──
+    # Build a thin ring at each thread ridge and union it
     z_count = max(int(CAP_TOTAL_LENGTH / CAP_THREAD_PITCH * 12), 48)
-
-    outer_rings = []
-    inner_rings = []
+    thread_verts = []
+    thread_faces = []
 
     for z_idx in range(z_count + 1):
         z = -z_idx * CAP_TOTAL_LENGTH / z_count
-
-        # Thread ridges only in insertion region, below top cap, above bottom cap
         if -CAP_INSERTION_LENGTH <= z <= -CAP_TOP_THICKNESS:
             phase = (-z / CAP_THREAD_PITCH) % 1.0
             thread_h = push_thread_profile(phase, CAP_THREAD_DEPTH)
         else:
             thread_h = 0.0
 
-        outer_ring = {}
-        inner_ring = {}
-
+        ring_start = len(thread_verts)
         for i in range(SEGMENTS):
-            # Skip segments in slit region
-            if in_slit(i, z):
-                continue
-
             angle = 2 * math.pi * i / SEGMENTS
             cos_a, sin_a = math.cos(angle), math.sin(angle)
+            # Inner at cylinder surface, outer at surface + thread
+            thread_verts.append([(outer_r) * cos_a, (outer_r) * sin_a, z])
+            thread_verts.append([(outer_r + thread_h) * cos_a,
+                                 (outer_r + thread_h) * sin_a, z])
 
-            r_out = outer_r + thread_h
-
-            outer_ring[i] = len(vertices)
-            vertices.append([r_out * cos_a, r_out * sin_a, z])
-
-            inner_ring[i] = len(vertices)
-            vertices.append([inner_r * cos_a, inner_r * sin_a, z])
-
-        outer_rings.append(outer_ring)
-        inner_rings.append(inner_ring)
-
-    # Build faces for wall segments that exist at both z levels
+    # Build thread ridge faces between adjacent z-levels
     for z_idx in range(z_count):
-        segs_both = sorted(set(outer_rings[z_idx].keys()) & set(outer_rings[z_idx + 1].keys()))
-        for s_idx in range(len(segs_both) - 1):
-            i, i_next = segs_both[s_idx], segs_both[s_idx + 1]
-            # Only connect adjacent segments (skip gaps)
-            if (i_next - i) > 2:
-                continue
-            # Outer wall
-            faces.append([outer_rings[z_idx][i], outer_rings[z_idx + 1][i],
-                         outer_rings[z_idx + 1][i_next], outer_rings[z_idx][i_next]])
-            # Inner wall
-            faces.append([inner_rings[z_idx][i], inner_rings[z_idx][i_next],
-                         inner_rings[z_idx + 1][i_next], inner_rings[z_idx + 1][i]])
+        for i in range(SEGMENTS):
+            i_next = (i + 1) % SEGMENTS
+            base = z_idx * SEGMENTS * 2
+            next_base = (z_idx + 1) * SEGMENTS * 2
+            # Outer face of thread ridge
+            o0 = base + i * 2 + 1
+            o1 = base + i_next * 2 + 1
+            o2 = next_base + i_next * 2 + 1
+            o3 = next_base + i * 2 + 1
+            thread_faces.append([o0, o1, o2])
+            thread_faces.append([o0, o2, o3])
 
-    # ── Solid top cap (z=0) — full disk ──
-    top_center = len(vertices)
-    vertices.append([0, 0, 0])
-    top_segs = sorted(outer_rings[0].keys())
-    for s_idx in range(len(top_segs) - 1):
-        i, i_next = top_segs[s_idx], top_segs[s_idx + 1]
-        if (i_next - i) > 2:
-            continue
-        faces.append([top_center, outer_rings[0][i], outer_rings[0][i_next]])
-    # Close the last-to-first if they're adjacent
-    if len(top_segs) > 2:
-        first, last = top_segs[0], top_segs[-1]
-        if (SEGMENTS - last + first) <= 2:
-            faces.append([top_center, outer_rings[0][last], outer_rings[0][first]])
+    # Combine: use the boolean result as the base, thread ridges as visual overlay
+    cap_v = np.array(cap_cyl.vertices)
+    cap_f = [list(f) for f in cap_cyl.faces]
 
-    # ── Solid bottom cap (z = -CAP_TOTAL_LENGTH) — full disk ──
-    bot_center = len(vertices)
-    vertices.append([0, 0, -CAP_TOTAL_LENGTH])
-    bot_segs = sorted(outer_rings[-1].keys())
-    for s_idx in range(len(bot_segs) - 1):
-        i, i_next = bot_segs[s_idx], bot_segs[s_idx + 1]
-        if (i_next - i) > 2:
-            continue
-        faces.append([bot_center, outer_rings[-1][i_next], outer_rings[-1][i]])
-    if len(bot_segs) > 2:
-        first, last = bot_segs[0], bot_segs[-1]
-        if (SEGMENTS - last + first) <= 2:
-            faces.append([bot_center, outer_rings[-1][first], outer_rings[-1][last]])
-
-    # ── Slit edge walls (seal the sides of the slit opening) ──
-    for z_idx in range(z_count):
-        segs_this = sorted(outer_rings[z_idx].keys())
-        segs_next = sorted(outer_rings[z_idx + 1].keys())
-        # Find edges where segments appear/disappear (slit boundaries)
-        for segs, ring_z, ring_z_label in [(segs_this, z_idx, 'this'), (segs_next, z_idx + 1, 'next')]:
-            pass  # Slit walls are handled implicitly by missing segments
-
-    return np.array(vertices), faces
-
-
-def generate_grip_tabs():
-    """Generate small grip tabs for finger purchase."""
-    vertices = []
-    faces = []
-
-    cap_r = CAP_OUTER_DIAMETER / 2
-    grip_r = cap_r + GRIP_LENGTH
-
-    z_top = GRIP_Z
-    z_bot = GRIP_Z - GRIP_THICKNESS
-
-    for wing_angle_deg in [90, 270]:
-        wing_angle = math.radians(wing_angle_deg)
-        half_w = math.atan2(GRIP_WIDTH / 2, cap_r)
-
-        a1 = wing_angle - half_w
-        a2 = wing_angle + half_w
-
-        b = len(vertices)
-
-        # Top face: inner-left, inner-right, outer-right, outer-left
-        vertices.append([cap_r * math.cos(a1), cap_r * math.sin(a1), z_top])
-        vertices.append([cap_r * math.cos(a2), cap_r * math.sin(a2), z_top])
-        vertices.append([grip_r * math.cos(a2), grip_r * math.sin(a2), z_top])
-        vertices.append([grip_r * math.cos(a1), grip_r * math.sin(a1), z_top])
-        # Bottom face
-        vertices.append([cap_r * math.cos(a1), cap_r * math.sin(a1), z_bot])
-        vertices.append([cap_r * math.cos(a2), cap_r * math.sin(a2), z_bot])
-        vertices.append([grip_r * math.cos(a2), grip_r * math.sin(a2), z_bot])
-        vertices.append([grip_r * math.cos(a1), grip_r * math.sin(a1), z_bot])
-
-        faces.append([b+0, b+1, b+2, b+3])  # Top
-        faces.append([b+4, b+7, b+6, b+5])  # Bottom
-        faces.append([b+3, b+2, b+6, b+7])  # Outer
-        faces.append([b+1, b+0, b+4, b+5])  # Inner
-        faces.append([b+0, b+3, b+7, b+4])  # Left
-        faces.append([b+2, b+1, b+5, b+6])  # Right
-
-    return np.array(vertices), faces
+    return cap_v, cap_f
 
 
 def generate_vertical_plate():
@@ -280,7 +215,7 @@ def generate_vertical_plate():
 
     y_plate_face = ht + yo
     y_boss_end = y_plate_face + PCB_BOSS_HEIGHT
-    y_hole_back = -ht + yo - 0.5  # hole extends through plate back (+ overshoot)
+    y_hole_back = -ht + yo  # hole ends flush with plate back face
 
     boss_positions = [
         (-half_grid + xo, z_center - half_grid),
@@ -399,26 +334,27 @@ def generate_central_mount():
     import trimesh
 
     cap_v, cap_f = generate_push_cap()
-    grip_v, grip_f = generate_grip_tabs()
-    plate_v, plate_f = generate_vertical_plate()
     gusset_v, gusset_f = generate_gusset()
 
-    # Boolean-subtract M2 holes from the plate box so holes go right through
+    # Build plate + bosses as proper trimesh volumes, then drill M2 holes
     xo = PLATE_X_OFFSET
     yo = PLATE_Y_OFFSET
     ht = PLATE_THICKNESS / 2
     half_grid = PCB_HOLE_GRID / 2
     z_top = PLATE_Z_TOP
     z_center = z_top - PLATE_HEIGHT / 2
-    hole_r = PCB_HOLE_DIAMETER / 2
 
-    # Build plate as trimesh
-    tri_pf = []
-    for f in plate_f:
-        if len(f) == 3: tri_pf.append(f)
-        elif len(f) == 4: tri_pf.append([f[0],f[1],f[2]]); tri_pf.append([f[0],f[2],f[3]])
-    plate_mesh = trimesh.Trimesh(vertices=plate_v, faces=np.array(tri_pf), process=True)
-    trimesh.repair.fix_normals(plate_mesh)
+    # Plate box as trimesh volume
+    plate_mesh = trimesh.creation.box(
+        extents=[PLATE_WIDTH, PLATE_THICKNESS, PLATE_HEIGHT],
+        transform=trimesh.transformations.translation_matrix([xo, yo, z_center]))
+
+    # Union 4 boss cylinders onto the plate
+    boss_r = PCB_BOSS_DIAMETER / 2
+    y_plate_face = ht + yo
+    y_boss_end = y_plate_face + PCB_BOSS_HEIGHT
+    boss_height = PCB_BOSS_HEIGHT
+    boss_center_y = (y_plate_face + y_boss_end) / 2
 
     hole_xz = [
         (-half_grid + xo, z_center - half_grid),
@@ -426,34 +362,50 @@ def generate_central_mount():
         (+half_grid + xo, z_center + half_grid),
         (-half_grid + xo, z_center + half_grid),
     ]
-
     for hx, hz in hole_xz:
-        cyl = trimesh.creation.cylinder(radius=hole_r, height=PLATE_THICKNESS + 2, sections=16)
-        # Rotate cylinder to align with Y axis (plate thickness direction)
-        T = np.eye(4)
-        T[0, 3] = hx
-        T[1, 3] = yo  # at plate center Y
-        T[2, 3] = hz
-        # Rotate 90° about X to align cylinder Z with world Y
+        boss = trimesh.creation.cylinder(
+            radius=boss_r, height=boss_height, sections=32)
+        # Rotate to Y axis
         R90 = np.eye(4)
         R90[1, 1] = 0; R90[1, 2] = -1
         R90[2, 1] = 1; R90[2, 2] = 0
-        cyl.apply_transform(R90)
-        cyl.apply_transform(T)
+        boss.apply_transform(R90)
+        T = trimesh.transformations.translation_matrix([hx, boss_center_y, hz])
+        boss.apply_transform(T)
         try:
-            plate_mesh = plate_mesh.difference(cyl, engine='manifold')
+            plate_mesh = plate_mesh.union(boss, engine='manifold')
         except Exception:
             pass
+    print(f"  Plate+bosses: {len(plate_mesh.faces)}f, vol={plate_mesh.is_volume}")
+
+    # Drill M2 clearance holes through plate + bosses (32 sections for clean circle)
+    M2_CLEARANCE_R = 1.1  # M2 clearance = 2.2mm diameter
+    y_drill_top = y_boss_end + 1.0
+    y_drill_bot = -ht + yo - 2.0
+    bore_length = y_drill_top - y_drill_bot
+    bore_center_y = (y_drill_top + y_drill_bot) / 2
+
+    n_before = len(plate_mesh.faces)
+    for hx, hz in hole_xz:
+        drill = trimesh.creation.cylinder(
+            radius=M2_CLEARANCE_R, height=bore_length, sections=32)
+        R90 = np.eye(4)
+        R90[1, 1] = 0; R90[1, 2] = -1
+        R90[2, 1] = 1; R90[2, 2] = 0
+        drill.apply_transform(R90)
+        T = trimesh.transformations.translation_matrix([hx, bore_center_y, hz])
+        drill.apply_transform(T)
+        try:
+            plate_mesh = plate_mesh.difference(drill, engine='manifold')
+        except Exception:
+            pass
+    print(f"  Plate drill: {n_before}→{len(plate_mesh.faces)}f, vol={plate_mesh.is_volume}")
 
     plate_v = np.array(plate_mesh.vertices)
     plate_f = [list(f) for f in plate_mesh.faces]
 
     all_verts = cap_v
     all_faces = list(cap_f)
-
-    offset = len(all_verts)
-    all_verts = np.vstack([all_verts, grip_v])
-    all_faces += [[i + offset for i in f] for f in grip_f]
 
     offset = len(all_verts)
     all_verts = np.vstack([all_verts, plate_v])
@@ -467,126 +419,171 @@ def generate_central_mount():
 
 
 def generate_pcb_prototype():
-    """Generate a 20x20mm PCB prototype with short pins in M2 screw holes.
+    """Generate a 20x20mm PCB prototype with M2 through-holes and pins.
 
     The PCB sits against the vertical plate of the push-cap mount.
+    Through-holes are boolean-subtracted so screws pass cleanly through.
+    Pins protrude in -Y through the boss holes and stick out the other side.
+
     Oriented in the same local frame as generate_central_mount():
     Z=0 at pad side, -Z downward.
 
     Returns (vertices, faces).
     """
+    import trimesh
+
     PCB_SIZE = 20.0
     PCB_THICK = 1.6       # standard PCB thickness
-    PIN_HEIGHT = 2.0
     PIN_R = 0.9           # slightly under M2 (1.0mm) for fit
     PIN_SEGS = 8
+    HOLE_R = PCB_HOLE_DIAMETER / 2  # M2 clearance
 
-    verts = []
-    faces = []
+    # Pin length: through boss + plate + 1mm protrusion out the back
+    PIN_LENGTH = PCB_BOSS_HEIGHT + PLATE_THICKNESS + 1.0
 
-    # PCB board — rectangular slab centred on the plate position
-    # The plate is oriented in the YZ plane with normal along X.
-    # PCB sits against the plate front face (+X side).
-    plate_front_x = PLATE_X_OFFSET + PLATE_THICKNESS / 2
-    pcb_x0 = plate_front_x
-    pcb_x1 = plate_front_x + PCB_THICK
+    # PCB board position
+    plate_front_y = PLATE_Y_OFFSET + PLATE_THICKNESS / 2
+    pcb_y0 = plate_front_y + PCB_BOSS_HEIGHT   # PCB sits at boss tips
+    pcb_y1 = pcb_y0 + PCB_THICK
 
     half = PCB_SIZE / 2
-    pcb_y0 = PLATE_Y_OFFSET - half
-    pcb_y1 = PLATE_Y_OFFSET + half
-    pcb_z0 = PLATE_Z_TOP - PLATE_HEIGHT / 2 - half
-    pcb_z1 = PLATE_Z_TOP - PLATE_HEIGHT / 2 + half
+    pcb_x0 = PLATE_X_OFFSET - half
+    pcb_x1 = PLATE_X_OFFSET + half
+    z_center = PLATE_Z_TOP - PLATE_HEIGHT / 2
+    pcb_z0 = z_center - half
+    pcb_z1 = z_center + half
 
-    # 8 corners of the rectangular slab
-    corners = [
-        [pcb_x0, pcb_y0, pcb_z0], [pcb_x1, pcb_y0, pcb_z0],
-        [pcb_x1, pcb_y1, pcb_z0], [pcb_x0, pcb_y1, pcb_z0],
-        [pcb_x0, pcb_y0, pcb_z1], [pcb_x1, pcb_y0, pcb_z1],
-        [pcb_x1, pcb_y1, pcb_z1], [pcb_x0, pcb_y1, pcb_z1],
-    ]
-    base = len(verts)
-    verts.extend(corners)
-    # 6 faces of the box (2 tris each)
-    box_faces = [
-        [0,2,1],[0,3,2],  # -Z face
-        [4,5,6],[4,6,7],  # +Z face
-        [0,1,5],[0,5,4],  # -Y face
-        [2,3,7],[2,7,6],  # +Y face
-        [0,4,7],[0,7,3],  # -X face
-        [1,2,6],[1,6,5],  # +X face
-    ]
-    faces.extend([[base + i for i in f] for f in box_faces])
+    # Create PCB slab as trimesh box
+    pcb_box = trimesh.creation.box(
+        extents=[PCB_SIZE, PCB_THICK, PCB_SIZE],
+        transform=trimesh.transformations.translation_matrix([
+            PLATE_X_OFFSET, (pcb_y0 + pcb_y1) / 2, z_center]))
 
-    # M2 mounting pins at 4 corners on 16mm grid
+    # Boolean-subtract M2 through-holes
     grid_half = PCB_HOLE_GRID / 2
-    hole_centres_yz = [
-        (PLATE_Y_OFFSET - grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 - grid_half),
-        (PLATE_Y_OFFSET + grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 - grid_half),
-        (PLATE_Y_OFFSET + grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 + grid_half),
-        (PLATE_Y_OFFSET - grid_half, PLATE_Z_TOP - PLATE_HEIGHT / 2 + grid_half),
+    hole_centres_xz = [
+        (PLATE_X_OFFSET - grid_half, z_center - grid_half),
+        (PLATE_X_OFFSET + grid_half, z_center - grid_half),
+        (PLATE_X_OFFSET + grid_half, z_center + grid_half),
+        (PLATE_X_OFFSET - grid_half, z_center + grid_half),
     ]
-    for hy, hz in hole_centres_yz:
-        # Pin cylinder protruding in -X direction (into the plate holes)
-        pin_base = len(verts)
-        # Top ring at plate front
+    for hx, hz in hole_centres_xz:
+        cyl = trimesh.creation.cylinder(radius=HOLE_R, height=PCB_THICK + 2, sections=16)
+        # Rotate to align with Y axis
+        R90 = np.eye(4)
+        R90[1, 1] = 0; R90[1, 2] = -1
+        R90[2, 1] = 1; R90[2, 2] = 0
+        cyl.apply_transform(R90)
+        T = np.eye(4)
+        T[0, 3] = hx
+        T[1, 3] = (pcb_y0 + pcb_y1) / 2
+        T[2, 3] = hz
+        cyl.apply_transform(T)
+        try:
+            pcb_box = pcb_box.difference(cyl, engine='manifold')
+        except Exception:
+            pass
+
+    # Build pin geometry (separate from PCB for clean mesh)
+    pin_verts = []
+    pin_faces = []
+    for hx, hz in hole_centres_xz:
+        pin_base = len(pin_verts)
+        # Top ring at PCB inner face
         for i in range(PIN_SEGS):
             a = 2 * math.pi * i / PIN_SEGS
-            verts.append([pcb_x0, hy + PIN_R * math.cos(a), hz + PIN_R * math.sin(a)])
-        # Bottom ring (into plate)
+            pin_verts.append([hx + PIN_R * math.cos(a), pcb_y0, hz + PIN_R * math.sin(a)])
+        # Bottom ring (protrudes through boss holes in -Y)
         for i in range(PIN_SEGS):
             a = 2 * math.pi * i / PIN_SEGS
-            verts.append([pcb_x0 - PIN_HEIGHT, hy + PIN_R * math.cos(a), hz + PIN_R * math.sin(a)])
-        # Top centre and bottom centre
-        top_c = len(verts)
-        verts.append([pcb_x0, hy, hz])
-        bot_c = len(verts)
-        verts.append([pcb_x0 - PIN_HEIGHT, hy, hz])
-        # Faces
+            pin_verts.append([hx + PIN_R * math.cos(a), pcb_y0 - PIN_LENGTH, hz + PIN_R * math.sin(a)])
+        top_c = len(pin_verts)
+        pin_verts.append([hx, pcb_y0, hz])
+        bot_c = len(pin_verts)
+        pin_verts.append([hx, pcb_y0 - PIN_LENGTH, hz])
         for i in range(PIN_SEGS):
             j = (i + 1) % PIN_SEGS
-            # Side
-            faces.append([pin_base + i, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
-            faces.append([pin_base + i, pin_base + PIN_SEGS + j, pin_base + j])
-            # Top cap
-            faces.append([top_c, pin_base + j, pin_base + i])
-            # Bottom cap
-            faces.append([bot_c, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
+            pin_faces.append([pin_base + i, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
+            pin_faces.append([pin_base + i, pin_base + PIN_SEGS + j, pin_base + j])
+            pin_faces.append([top_c, pin_base + j, pin_base + i])
+            pin_faces.append([bot_c, pin_base + PIN_SEGS + i, pin_base + PIN_SEGS + j])
 
-    return np.array(verts, dtype=float), faces
+    # Combine PCB board + pins
+    pcb_v = np.array(pcb_box.vertices)
+    pcb_f = [list(f) for f in pcb_box.faces]
+    offset = len(pcb_v)
+    all_v = np.vstack([pcb_v, np.array(pin_verts, dtype=float)])
+    all_f = pcb_f + [[i + offset for i in f] for f in pin_faces]
+
+    return all_v, all_f
 
 
-def generate_bounding_cylinder(tolerance=0.5):
-    """Generate a vertical bounding cylinder around the push-cap mechanism.
+def generate_bounding_ellipse_prism(tolerance=0.5):
+    """Generate a vertical elliptical prism around the push-cap mechanism.
 
-    The cylinder encloses the cap + boss + grip tabs + PCB plate, with a
-    small tolerance for printing clearance.  No end caps (open cylinder).
+    The prism has an elliptical cross-section whose major axis (X) aligns
+    with the pad's long axis and whose minor axis (Y) aligns with the pad's
+    short axis.  The semi-axes are computed from the mechanism component
+    extents so that cap + boss + plate + gusset are fully enclosed.
 
     Oriented in the same local frame: Z=0 at pad side, -Z downward.
+    No end caps (open prism).
 
-    Returns (vertices, faces, outer_radius, z_top, z_bot).
+    Returns (vertices, faces, semi_x, semi_y, z_top, z_bot).
     """
-    # Compute the bounding radius from all mechanism components
-    cap_r = CAP_OUTER_DIAMETER / 2 + CAP_THREAD_DEPTH
-    grip_r = CAP_OUTER_DIAMETER / 2 + GRIP_LENGTH
-    # The plate extends in Y from the plate back to plate front, and in X
-    # Account for the boss (BOSS_INNER_DIAMETER/2 + CENTRAL_MOUNT_WALL_THICKNESS)
     from generate_notepad import CENTRAL_MOUNT_WALL_THICKNESS
+
+    cap_r = CAP_OUTER_DIAMETER / 2 + CAP_THREAD_DEPTH
     boss_r = BOSS_INNER_DIAMETER / 2 + CENTRAL_MOUNT_WALL_THICKNESS
 
-    # The bounding cylinder needs to clear the boss + cap + grips + plate
-    # The plate offset means it's not concentric — use the maximum extent
-    plate_max_r = math.sqrt(
-        max(abs(PLATE_X_OFFSET - PLATE_THICKNESS / 2),
-            abs(PLATE_X_OFFSET + PLATE_THICKNESS / 2)) ** 2 +
-        max(abs(PLATE_Y_OFFSET - PLATE_WIDTH / 2),
-            abs(PLATE_Y_OFFSET + PLATE_WIDTH / 2)) ** 2
-    )
-    outer_r = max(cap_r, grip_r, boss_r, plate_max_r) + tolerance
+    # Collect critical XY points from all mechanism components
+    hw = PLATE_WIDTH / 2
+    ht = PLATE_THICKNESS / 2
+    xo = PLATE_X_OFFSET
+    yo = PLATE_Y_OFFSET
+    half_grid = PCB_HOLE_GRID / 2
+    y_boss_end = ht + yo + PCB_BOSS_HEIGHT
+    gusset_hw = PLATE_WIDTH * 0.3
+    y_gusset = -ht + yo - _GUSSET_DEPTH
 
-    z_top = 1.0   # slightly above cap top (boss protrudes above)
+    critical = []
+    # Boss / cap perimeter (circular, sample densely)
+    for r in (cap_r, boss_r):
+        for i in range(64):
+            a = 2 * math.pi * i / 64
+            critical.append((r * math.cos(a), r * math.sin(a)))
+    # Plate corners
+    for x in (-hw + xo, hw + xo):
+        for y in (-ht + yo, ht + yo):
+            critical.append((x, y))
+    # PCB boss tips on plate front face
+    for cx in (-half_grid + xo, half_grid + xo):
+        critical.append((cx, y_boss_end))
+    # Gusset corners
+    for x in (-gusset_hw + xo, gusset_hw + xo):
+        critical.append((x, y_gusset))
+
+    pts = np.array(critical)
+    x_max = float(np.abs(pts[:, 0]).max())
+    y_max = float(np.abs(pts[:, 1]).max())
+
+    # Start with bounding-box semi-axes, then scale up uniformly
+    # until every critical point satisfies (x/a)^2 + (y/b)^2 <= 1
+    a, b = x_max, y_max
+    if a > 0 and b > 0:
+        violation = float(np.max((pts[:, 0] / a) ** 2 + (pts[:, 1] / b) ** 2))
+        if violation > 1.0:
+            scale = math.sqrt(violation)
+            a *= scale
+            b *= scale
+
+    semi_x = a + tolerance
+    semi_y = b + tolerance
+
+    z_top = 1.0   # slightly above cap top
     z_bot = PLATE_Z_TOP - PLATE_HEIGHT - 2.0  # below PCB plate
 
-    # Generate open cylinder (wall only, no end caps)
+    # Generate open elliptical prism (wall only, no end caps)
     S = SEGMENTS
     verts = []
     faces_out = []
@@ -594,13 +591,13 @@ def generate_bounding_cylinder(tolerance=0.5):
     # Top ring
     r0 = len(verts)
     for i in range(S):
-        a = 2 * math.pi * i / S
-        verts.append([outer_r * math.cos(a), outer_r * math.sin(a), z_top])
+        ang = 2 * math.pi * i / S
+        verts.append([semi_x * math.cos(ang), semi_y * math.sin(ang), z_top])
     # Bottom ring
     r1 = len(verts)
     for i in range(S):
-        a = 2 * math.pi * i / S
-        verts.append([outer_r * math.cos(a), outer_r * math.sin(a), z_bot])
+        ang = 2 * math.pi * i / S
+        verts.append([semi_x * math.cos(ang), semi_y * math.sin(ang), z_bot])
 
     # Side faces (quads as 2 triangles)
     for i in range(S):
@@ -608,7 +605,7 @@ def generate_bounding_cylinder(tolerance=0.5):
         faces_out.append([r0 + i, r1 + i, r1 + j])
         faces_out.append([r0 + i, r1 + j, r0 + j])
 
-    return np.array(verts, dtype=float), faces_out, outer_r, z_top, z_bot
+    return np.array(verts, dtype=float), faces_out, semi_x, semi_y, z_top, z_bot
 
 
 def main():
@@ -618,7 +615,6 @@ def main():
     print(f"  Cap OD: {CAP_OUTER_DIAMETER:.1f}mm (fits {BOSS_INNER_DIAMETER}mm boss)")
     print(f"  Insertion: {CAP_INSERTION_LENGTH:.0f}mm, Exposed: {CAP_EXPOSED_LENGTH:.0f}mm")
     print(f"  Wire slit: {SLIT_WIDTH:.0f}mm wide, Z={SLIT_TOP_Z:.0f} to {SLIT_BOTTOM_Z:.0f}")
-    print(f"  Grip tabs: {GRIP_LENGTH:.0f}mm extension, {GRIP_WIDTH:.0f}mm wide")
     print(f"  Vertical plate: {PLATE_WIDTH:.0f}x{PLATE_HEIGHT:.0f}x{PLATE_THICKNESS:.1f}mm")
     print(f"  PCB holes: M2 on {PCB_HOLE_GRID:.0f}mm grid (matches outer ring)")
 
@@ -637,12 +633,12 @@ def main():
     write_obj(out_dir / "pcb_prototype.obj", pcb_v, pcb_f, "PCBPrototype")
     write_stl(out_dir / "pcb_prototype.stl", pcb_v, pcb_f, "PCBPrototype")
 
-    # Bounding cylinder
-    print("\nGenerating bounding cylinder...")
-    bc_v, bc_f, bc_r, bc_zt, bc_zb = generate_bounding_cylinder()
-    print(f"  R={bc_r:.1f}mm, Z=[{bc_zb:.1f}, {bc_zt:.1f}]mm")
+    # Bounding ellipse prism
+    print("\nGenerating bounding ellipse prism...")
+    bc_v, bc_f, bc_sx, bc_sy, bc_zt, bc_zb = generate_bounding_ellipse_prism(tolerance=1.5)
+    print(f"  Semi-axes: X={bc_sx:.1f}mm, Y={bc_sy:.1f}mm, Z=[{bc_zb:.1f}, {bc_zt:.1f}]mm")
     print(f"  {len(bc_v)}v, {len(bc_f)}f")
-    write_obj(out_dir / "bounding_cylinder.obj", bc_v, bc_f, "BoundingCylinder")
+    write_obj(out_dir / "bounding_ellipse.obj", bc_v, bc_f, "BoundingEllipse")
 
 
 if __name__ == "__main__":
