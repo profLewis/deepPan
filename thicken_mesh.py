@@ -117,10 +117,22 @@ def main():
         vnormals = -vnormals
         print("  Flipped normals to point outward")
 
-    # Create inner surface: offset each vertex inward by thickness
-    # Inward = -outward_normal
-    print(f"Offsetting {thickness}mm inward...")
-    inner_verts = verts - thickness * vnormals
+    # Create inner surface: offset each vertex inward by thickness.
+    # Only offset vertices that are NOT on the base (normal pointing
+    # downward).  Base vertices stay at their original position so the
+    # base is not thickened — only the playing surface and drum wall
+    # get material added into the drum interior.
+    print(f"Offsetting {thickness}mm inward (surface + wall only)...")
+    inner_verts = verts.copy()
+    n_offset = 0
+    for vi in range(n_v):
+        ny = vnormals[vi, 1]
+        # Base faces have outward normal pointing downward (ny < -0.3)
+        # Don't offset those — only offset upward/sideways-facing faces
+        if ny >= -0.3:
+            inner_verts[vi] = verts[vi] - thickness * vnormals[vi]
+            n_offset += 1
+    print(f"  {n_offset}/{n_v} vertices offset ({n_v - n_offset} base verts kept)")
 
     # Build combined mesh:
     # - Outer surface: original faces (outward normals)
