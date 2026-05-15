@@ -89,6 +89,9 @@ SMALL_MOUNT_NOTCH_WIDTH = CENTRAL_MOUNT_NOTCH_WIDTH
 SMALL_MOUNT_OUTER_DIAMETER = CENTRAL_MOUNT_OUTER_DIAMETER
 SMALL_MIN_PAD_SIZE = CENTRAL_MIN_PAD_SIZE
 
+# Toggle: skip screw-hole subtraction entirely (set via --no-screw-holes CLI flag)
+NO_SCREW_HOLES = False
+
 # M2 through-hole parameters (holes through full pad thickness)
 SCREW_HOLE_DIAMETER = 2.2     # M2 clearance hole (2.2mm for M2 bolt)
 SCREW_HOLE_INSET = 8.0        # Distance inset from pad boundary
@@ -2073,6 +2076,10 @@ def generate_notepad(note_index, obj_path, output_dir,
             mount_center=pan_surface_centroid, mount_clearance=0.0,
             hw_mask_2d=_hw_mask, tangent_xl=_xl_hw, tangent_yl=_yl_hw)
 
+    if NO_SCREW_HOLES:
+        hole_positions = []
+        print(f"  Skipping screw-hole subtraction (--no-screw-holes)")
+
     if hole_positions:
         pre_vert_count = len(pan_solid_verts)
         pan_solid_verts, pan_solid_faces = subtract_screw_holes(
@@ -2313,6 +2320,10 @@ def main():
     for arg in sys.argv[1:]:
         if arg.startswith('--spread='):
             groove_spread = float(arg.split('=')[1])
+        elif arg == '--no-screw-holes':
+            global NO_SCREW_HOLES
+            NO_SCREW_HOLES = True
+            print("Screw-hole subtraction disabled (--no-screw-holes)")
         else:
             remaining_args.append(arg)
 
@@ -2325,13 +2336,18 @@ def main():
             # Generate all 29 note pads
             print("Generating all 29 note pads...")
             results = []
-            # Clone map: all outer pads clone from O1 (rotate by 30° increments),
-            # I4 clones from I1 (broken source geometry)
-            clone_map = {
-                'I4': 'I1',
-                'O0': 'O1', 'O2': 'O1', 'O3': 'O1', 'O4': 'O1', 'O5': 'O1',
-                'O6': 'O1', 'O7': 'O1', 'O8': 'O1', 'O9': 'O1', 'O10': 'O1', 'O11': 'O1',
-            }
+            # Each outer pad now generates from its own bowl face group
+            # (was previously cloned from O1 with 30deg rotations — but each
+            # outer pad has its own pan/grove groups in the source bowl, so
+            # we use them directly for shape fidelity).
+            # I4 still clones from I1 — its own source geometry is broken.
+            clone_map = {'I4': 'I1'}
+            if '--clone-outer' in remaining_args:
+                clone_map.update({
+                    'O0': 'O1', 'O2': 'O1', 'O3': 'O1', 'O4': 'O1', 'O5': 'O1',
+                    'O6': 'O1', 'O7': 'O1', 'O8': 'O1', 'O9': 'O1',
+                    'O10': 'O1', 'O11': 'O1',
+                })
 
             for note_index in sorted(NOTE_BY_INDEX.keys()):
                 clone_src = clone_map.get(note_index)

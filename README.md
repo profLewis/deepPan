@@ -10,6 +10,15 @@
 
 This project creates a **3D printable tenor steel pan** from a 3D scanned model. The pan is split into printable sections with individually mountable note pads, enabling replacement of damaged notes, experimentation with materials and tuning, and educational exploration of steel pan acoustics.
 
+## Quick build (recreate from scratch)
+
+```bash
+./build_from_scratch.sh
+```
+
+Reads `data/Tenor Pan only.obj` and produces a watertight, printable model at `pipeline_output/pan_printable.stl`.
+End-to-end the script runs 9 stages: groove extraction → solidify → notepads → body shell → boundary extension → thickening → groove-replacement ellipsoids → boolean-merge body+ellipsoids → voxel-remesh+pads+outer-grooves+debris-strip. Takes 40–60 minutes. Splitting into 7 printable parts (`split_assembly.py`) is an optional extra step.
+
 ## Tenor Pan Layout
 
 ![Tenor Pan Note Layout](docs/tenor_pan_layout.png)
