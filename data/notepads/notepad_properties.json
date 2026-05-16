@@ -1,5 +1,481 @@
 [
   {
+    "index": "C0",
+    "note": "F#",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.008001066318244392,
+      0.9893328033610503,
+      0.14545304098414888
+    ],
+    "centroid": [
+      -2.7463324519080072,
+      741.2233816809344,
+      68.16836113811335
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      48.992443078181,
+      19.849211454653187,
+      71.763393630758
+    ],
+    "obj_path": "data/notepads/notepad_C0.obj",
+    "stl_path": "data/notepads/notepad_C0.stl"
+  },
+  {
+    "index": "C1",
+    "note": "B",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.0994321381478399,
+      0.9853214845185977,
+      0.1387617456268683
+    ],
+    "centroid": [
+      52.61908715046027,
+      742.8438003140324,
+      70.96648292435177
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      48.89543219248955,
+      18.335325126367593,
+      54.73602470087563
+    ],
+    "obj_path": "data/notepads/notepad_C1.obj",
+    "stl_path": "data/notepads/notepad_C1.stl"
+  },
+  {
+    "index": "C10",
+    "note": "Ab",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.20982240205854275,
+      0.9582276275759423,
+      0.1943563051320034
+    ],
+    "centroid": [
+      -103.27247171724754,
+      755.633626850218,
+      41.07593523163443
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      48.05607011467707,
+      19.81717332140238,
+      39.561176652289674
+    ],
+    "obj_path": "data/notepads/notepad_C10.obj",
+    "stl_path": "data/notepads/notepad_C10.stl"
+  },
+  {
+    "index": "C11",
+    "note": "C#",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.11083055556239907,
+      0.9824942817940842,
+      0.14973835245406114
+    ],
+    "centroid": [
+      -57.041365507552854,
+      744.8217514735834,
+      64.34477141408316
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      50.90529440714092,
+      18.112584890702692,
+      56.73299547651932
+    ],
+    "obj_path": "data/notepads/notepad_C11.obj",
+    "stl_path": "data/notepads/notepad_C11.stl"
+  },
+  {
+    "index": "C2",
+    "note": "E",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.15707863113305925,
+      0.9606765165998465,
+      0.22896928635725186
+    ],
+    "centroid": [
+      80.61280827439757,
+      755.3846969603462,
+      26.139390243232306
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      66.36157177644239,
+      21.73943096402354,
+      56.82328609013662
+    ],
+    "obj_path": "data/notepads/notepad_C2.obj",
+    "stl_path": "data/notepads/notepad_C2.stl"
+  },
+  {
+    "index": "C3",
+    "note": "A",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.20716256262182028,
+      0.9255808974836105,
+      0.31683382846753366
+    ],
+    "centroid": [
+      103.77119770616554,
+      772.0565434248098,
+      -17.10792258863353
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      66.23170762193247,
+      24.97150667404071,
+      42.86572893227824
+    ],
+    "obj_path": "data/notepads/notepad_C3.obj",
+    "stl_path": "data/notepads/notepad_C3.stl"
+  },
+  {
+    "index": "C4",
+    "note": "D",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.14261333295338213,
+      0.9057241100127803,
+      0.39915570120628946
+    ],
+    "centroid": [
+      73.8913349148702,
+      783.4253876161836,
+      -60.71975444639039
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      64.54210738439932,
+      30.91433975866903,
+      50.28702401129525
+    ],
+    "obj_path": "data/notepads/notepad_C4.obj",
+    "stl_path": "data/notepads/notepad_C4.stl"
+  },
+  {
+    "index": "C5",
+    "note": "G",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.10706692069188255,
+      0.8671427363459643,
+      0.48641561374609626
+    ],
+    "centroid": [
+      54.20927130465759,
+      801.0801947897377,
+      -104.3384643164498
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      38.474571584862765,
+      28.20763124270104,
+      41.11132864967206
+    ],
+    "obj_path": "data/notepads/notepad_C5.obj",
+    "stl_path": "data/notepads/notepad_C5.stl"
+  },
+  {
+    "index": "C6",
+    "note": "C",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      -0.02284974600493768,
+      0.8752234902775444,
+      0.48317877765264383
+    ],
+    "centroid": [
+      9.097782437257377,
+      798.6233684531093,
+      -104.45541533720245
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      37.415883051784704,
+      35.829760870803966,
+      59.95746578196466
+    ],
+    "obj_path": "data/notepads/notepad_C6.obj",
+    "stl_path": "data/notepads/notepad_C6.stl"
+  },
+  {
+    "index": "C7",
+    "note": "F",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.06531208403649907,
+      0.8956013855915175,
+      0.4400369186845162
+    ],
+    "centroid": [
+      -38.433532356013856,
+      788.3205333555364,
+      -80.52793077865014
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      58.88389663187965,
+      34.10920865885805,
+      59.145759983556225
+    ],
+    "obj_path": "data/notepads/notepad_C7.obj",
+    "stl_path": "data/notepads/notepad_C7.stl"
+  },
+  {
+    "index": "C8",
+    "note": "Bb",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.17745665678976394,
+      0.8963320435167141,
+      0.40632253534126234
+    ],
+    "centroid": [
+      -90.423575309598,
+      786.0344700648632,
+      -60.7782778232558
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      62.77673506255794,
+      27.402120013160243,
+      37.46081176005179
+    ],
+    "obj_path": "data/notepads/notepad_C8.obj",
+    "stl_path": "data/notepads/notepad_C8.stl"
+  },
+  {
+    "index": "C9",
+    "note": "Eb",
+    "octave": 5,
+    "ring": "central",
+    "normal": [
+      0.1647399735452488,
+      0.9384930516598052,
+      0.303465868101467
+    ],
+    "centroid": [
+      -84.65633043219813,
+      766.5717485804481,
+      -11.657625943910697
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      74.20674770375462,
+      24.632967730223072,
+      45.95476845786653
+    ],
+    "obj_path": "data/notepads/notepad_C9.obj",
+    "stl_path": "data/notepads/notepad_C9.stl"
+  },
+  {
+    "index": "I0",
+    "note": "C#",
+    "octave": 6,
+    "ring": "inner",
+    "normal": [
+      0.05798034996036133,
+      0.96839704588439,
+      0.24258079178051278
+    ],
+    "centroid": [
+      -3.8092708408092526,
+      752.6145585671171,
+      11.981357931509795
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      33.49268662070765,
+      19.209553778150962,
+      34.64312446722379
+    ],
+    "obj_path": "data/notepads/notepad_I0.obj",
+    "stl_path": "data/notepads/notepad_I0.stl"
+  },
+  {
+    "index": "I1",
+    "note": "E",
+    "octave": 6,
+    "ring": "inner",
+    "normal": [
+      -0.07063870319815514,
+      0.946127791210793,
+      0.3159942662597992
+    ],
+    "centroid": [
+      28.00393603427446,
+      758.6979235051739,
+      -7.249257622234391
+    ],
+    "scale_factor": 1.15,
+    "was_scaled": true,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      36.8669819205348,
+      20.57434081889801,
+      32.24913963134077
+    ],
+    "obj_path": "data/notepads/notepad_I1.obj",
+    "stl_path": "data/notepads/notepad_I1.stl"
+  },
+  {
+    "index": "I2",
+    "note": "D",
+    "octave": 6,
+    "ring": "inner",
+    "normal": [
+      -0.04013611151502456,
+      0.9352979418030409,
+      0.3515776622759882
+    ],
+    "centroid": [
+      21.44483674763525,
+      768.8685019648265,
+      -38.78008609654645
+    ],
+    "scale_factor": 1.1334479613302872,
+    "was_scaled": true,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      32.155916862356484,
+      22.365612455056294,
+      35.39887802783246
+    ],
+    "obj_path": "data/notepads/notepad_I2.obj",
+    "stl_path": "data/notepads/notepad_I2.stl"
+  },
+  {
+    "index": "I3",
+    "note": "C",
+    "octave": 6,
+    "ring": "inner",
+    "normal": [
+      0.03022939371029993,
+      0.9407770248504614,
+      0.337675544375695
+    ],
+    "centroid": [
+      -13.944971571811184,
+      765.3165598518058,
+      -29.107216982377892
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      34.64605090110833,
+      21.92099794317585,
+      34.50284153542346
+    ],
+    "obj_path": "data/notepads/notepad_I3.obj",
+    "stl_path": "data/notepads/notepad_I3.stl"
+  },
+  {
+    "index": "I4",
+    "note": "Eb",
+    "octave": 6,
+    "ring": "inner",
+    "normal": [
+      0.07853171888443142,
+      0.959367616421204,
+      0.27101023170971633
+    ],
+    "centroid": [
+      -38.6538773509385,
+      755.7662938732101,
+      5.550776297321463
+    ],
+    "scale_factor": 1.1226109240834174,
+    "was_scaled": true,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      37.13195382101486,
+      20.091102669015072,
+      33.83349127104199
+    ],
+    "obj_path": "data/notepads/notepad_I4.obj",
+    "stl_path": "data/notepads/notepad_I4.stl"
+  },
+  {
     "index": "O0",
     "note": "F#",
     "octave": 4,
@@ -16,36 +492,323 @@
     ],
     "scale_factor": 1.0,
     "was_scaled": false,
-    "hole_positions": [
-      [
-        -53.15534166396856,
-        775.9438927535405,
-        240.62796377588998
-      ],
-      [
-        36.66049049630375,
-        774.6292229753137,
-        243.13442818361628
-      ],
-      [
-        37.93405135800698,
-        745.81224982183,
-        177.65682709491279
-      ],
-      [
-        -32.67498497397359,
-        742.964590953307,
-        162.6198918811811
-      ]
-    ],
+    "hole_positions": [],
     "hole_diameter": 2.2,
     "hole_through": true,
     "bbox_size": [
-      120.62328303061165,
-      44.356208152931,
-      104.99036151749368
+      128.56203445228857,
+      45.45136766959001,
+      109.04603492340419
     ],
     "obj_path": "data/notepads/notepad_O0.obj",
     "stl_path": "data/notepads/notepad_O0.stl"
+  },
+  {
+    "index": "O1",
+    "note": "B",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      -0.30756705112986554,
+      0.9097457948864431,
+      -0.27886394127909847
+    ],
+    "centroid": [
+      99.10341977516939,
+      759.6326389679724,
+      170.9927051836667
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      130.96638899013465,
+      61.24732880654358,
+      134.63254183184583
+    ],
+    "obj_path": "data/notepads/notepad_O1.obj",
+    "stl_path": "data/notepads/notepad_O1.stl"
+  },
+  {
+    "index": "O10",
+    "note": "Ab",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.5323792877999737,
+      0.8440943876144491,
+      -0.06385106670511441
+    ],
+    "centroid": [
+      -170.74156655296753,
+      780.7509802742441,
+      101.8288288429349
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      121.77727176431995,
+      80.06206334671845,
+      142.44096088109495
+    ],
+    "obj_path": "data/notepads/notepad_O10.obj",
+    "stl_path": "data/notepads/notepad_O10.stl"
+  },
+  {
+    "index": "O11",
+    "note": "C#",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.3072704563951205,
+      0.9097958699845332,
+      -0.2790274925268489
+    ],
+    "centroid": [
+      -98.43890817696783,
+      759.6349154018178,
+      170.98525287917317
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      130.93820715679186,
+      61.286769924033706,
+      134.71374533090295
+    ],
+    "obj_path": "data/notepads/notepad_O11.obj",
+    "stl_path": "data/notepads/notepad_O11.stl"
+  },
+  {
+    "index": "O2",
+    "note": "E",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      -0.532550560569733,
+      0.8440077419258478,
+      -0.06356753893375701
+    ],
+    "centroid": [
+      171.41178205227394,
+      780.7470403996942,
+      101.84173558297904
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      121.83986043529205,
+      80.01739135390983,
+      142.3702453590913
+    ],
+    "obj_path": "data/notepads/notepad_O2.obj",
+    "stl_path": "data/notepads/notepad_O2.stl"
+  },
+  {
+    "index": "O3",
+    "note": "A",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      -0.6151648220092742,
+      0.7538394764495793,
+      0.23086421443896915
+    ],
+    "centroid": [
+      197.6849624780786,
+      809.2864347501862,
+      7.261790256827202
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      95.58211255522747,
+      94.9266852124091,
+      124.57620181076811
+    ],
+    "obj_path": "data/notepads/notepad_O3.obj",
+    "stl_path": "data/notepads/notepad_O3.stl"
+  },
+  {
+    "index": "O4",
+    "note": "D",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      -0.5325209542226289,
+      0.6643110560949208,
+      0.5245114432153714
+    ],
+    "centroid": [
+      171.44717423032253,
+      838.4466404180691,
+      -87.10302611026069
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      121.81950986695045,
+      102.2847358239261,
+      108.5191306103942
+    ],
+    "obj_path": "data/notepads/notepad_O4.obj",
+    "stl_path": "data/notepads/notepad_O4.stl"
+  },
+  {
+    "index": "O5",
+    "note": "G",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      -0.3073514596556977,
+      0.5985921792904855,
+      0.7397448770622067
+    ],
+    "centroid": [
+      99.13272394474465,
+      859.5661049094698,
+      -156.27057549364974
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      130.93824716746408,
+      100.49766249846016,
+      98.48814294143546
+    ],
+    "obj_path": "data/notepads/notepad_O5.obj",
+    "stl_path": "data/notepads/notepad_O5.stl"
+  },
+  {
+    "index": "O6",
+    "note": "C",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.00017106252576062862,
+      0.5733098880910683,
+      0.8193386009182155
+    ],
+    "centroid": [
+      0.34573689902941673,
+      865.8163381058791,
+      -180.4968246239584
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      128.56219670961934,
+      94.37265717350874,
+      71.58020213889941
+    ],
+    "obj_path": "data/notepads/notepad_O6.obj",
+    "stl_path": "data/notepads/notepad_O6.stl"
+  },
+  {
+    "index": "O7",
+    "note": "F",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.30765053790222485,
+      0.5986426151121071,
+      0.7395797224777119
+    ],
+    "centroid": [
+      -98.44160210437475,
+      859.5683176265926,
+      -156.27782036112222
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      131.0034378225977,
+      100.53446025393691,
+      98.46741730390116
+    ],
+    "obj_path": "data/notepads/notepad_O7.obj",
+    "stl_path": "data/notepads/notepad_O7.stl"
+  },
+  {
+    "index": "O8",
+    "note": "Bb",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.5326935878475261,
+      0.6643983632351463,
+      0.5242254823991185
+    ],
+    "centroid": [
+      -170.7615954447237,
+      838.4504702247207,
+      -87.11557183090407
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      121.79744167426594,
+      102.31420476280607,
+      108.44213570526577
+    ],
+    "obj_path": "data/notepads/notepad_O8.obj",
+    "stl_path": "data/notepads/notepad_O8.stl"
+  },
+  {
+    "index": "O9",
+    "note": "Eb",
+    "octave": 4,
+    "ring": "outer",
+    "normal": [
+      0.6152901493892571,
+      0.7538544606832256,
+      0.2304809844055448
+    ],
+    "centroid": [
+      -197.18029481465783,
+      809.492049801771,
+      7.061810399405806
+    ],
+    "scale_factor": 1.0,
+    "was_scaled": false,
+    "hole_positions": [],
+    "hole_diameter": 2.2,
+    "hole_through": true,
+    "bbox_size": [
+      96.04308445358214,
+      94.9764175189257,
+      124.72970008427482
+    ],
+    "obj_path": "data/notepads/notepad_O9.obj",
+    "stl_path": "data/notepads/notepad_O9.stl"
   }
 ]

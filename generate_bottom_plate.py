@@ -53,62 +53,60 @@ def main():
     y_top = args.skirt_y
     y_bot = y_top - args.thickness
 
+    # The exported STL is Z-up (Blender convention): drum's vertical axis = Z.
+    # Plate sits at the drum's skirt bottom (Z ≈ −123). z_top = top face of
+    # plate (touching skirt); z_bot = bottom face.
+    z_top = args.skirt_y
+    z_bot = z_top - args.thickness
+    plate_center_z = (z_top + z_bot) / 2
+
     print(f"Plate: outer R={plate_r}mm, thickness={args.thickness}mm")
-    print(f"  Y top  = {y_top:.2f} (sits flush against drum skirt bottom)")
-    print(f"  Y bot  = {y_bot:.2f}")
+    print(f"  Z top  = {z_top:.2f} (sits flush against drum skirt bottom)")
+    print(f"  Z bot  = {z_bot:.2f}")
     print(f"  {args.n_holes} M4 countersunk holes at R = {hole_circle_r:.2f}mm")
 
-    # Build plate solid as a cylinder via trimesh
+    # trimesh.creation.cylinder is along Z by default — that's already the
+    # axis we want. No rotation needed.
     plate = trimesh.creation.cylinder(
         radius=plate_r,
         height=args.thickness,
         sections=128,
     )
-    plate.apply_translation([0, (y_top + y_bot) / 2, 0])
-    # trimesh creates cylinder along Z by default — rotate to Y axis
-    R = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
-    plate.apply_transform(R)
-    # Recenter (rotation about origin may shift)
-    plate.apply_translation([0, (y_top + y_bot) / 2 - plate.bounds.mean(axis=0)[1], 0])
+    plate.apply_translation([0, 0, plate_center_z])
 
-    # Hole positions
+    # Hole positions in the XY plane
     holes = []
     for i in range(args.n_holes):
         ang = 2 * math.pi * i / args.n_holes
-        # Stagger so holes don't sit on the strut planes (15+30i deg).
-        # Strut angles are 15, 75, 135, 195, 255, 315 deg. Offset by 22.5 deg.
+        # Stagger so holes don't sit on strut planes (15+30·i deg).
         ang += math.radians(22.5)
         x = hole_circle_r * math.cos(ang)
-        z = hole_circle_r * math.sin(ang)
+        y = hole_circle_r * math.sin(ang)
         holes.append({
-            "x": x, "z": z,
+            "x": x, "y": y,
             "angle_deg": math.degrees(ang),
             "clear_r": args.hole_r_clear,
             "counter_r": args.counter_r,
             "counter_depth": args.counter_depth,
         })
 
-    # Subtract M4 through-holes + countersinks
     for h in holes:
-        # Through-hole
+        # Through-hole, vertical along Z
         bore = trimesh.creation.cylinder(
             radius=h["clear_r"], height=args.thickness + 1.0, sections=32,
         )
-        R2 = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
-        bore.apply_transform(R2)
-        bore.apply_translation([h["x"], (y_top + y_bot) / 2, h["z"]])
+        bore.apply_translation([h["x"], h["y"], plate_center_z])
         plate = plate.difference(bore)
-        # Countersink (cone-ish; use a cylinder with stepped diameter for FDM-friendly)
+        # Countersink on top face (the face touching the drum is the top)
         ctr = trimesh.creation.cylinder(
             radius=h["counter_r"],
             height=args.counter_depth + 0.5,
             sections=32,
         )
-        ctr.apply_transform(R2)
-        ctr_y = y_top - args.counter_depth / 2 + 0.25
-        ctr.apply_translation([h["x"], ctr_y, h["z"]])
+        ctr.apply_translation([h["x"], h["y"],
+                               z_top - args.counter_depth / 2 + 0.25])
         plate = plate.difference(ctr)
-        print(f"  hole at ({h['x']:+7.2f}, {h['z']:+7.2f})  "
+        print(f"  hole at ({h['x']:+7.2f}, {h['y']:+7.2f})  "
               f"angle={h['angle_deg']:6.2f}deg")
 
     # Export
@@ -119,9 +117,12 @@ def main():
     print(f"\nWrote {obj_path}  ({len(plate.vertices)} verts, {len(plate.faces)} faces)")
     print(f"Wrote {stl_path}")
 
-    # Save the screw pattern so the splitting step can drill matching holes
+    # Save the screw pattern so the drilling step can drill matching holes
+    # in the drum skirt. Coords are in the printable STL (Z-up) system:
+    # 'skirt_z' is the Z coord of the drum skirt bottom rim.
     pattern = {
-        "skirt_y": args.skirt_y,
+        "skirt_z": args.skirt_y,           # NB: named 'skirt_y' historically; meaning is "vertical position"
+        "skirt_y": args.skirt_y,           # legacy alias for back-compat
         "plate_thickness": args.thickness,
         "hole_circle_r": hole_circle_r,
         "n_holes": args.n_holes,

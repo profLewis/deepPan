@@ -34,8 +34,8 @@ python3 generate_grooves.py
 step "2/9  Solidify grooves (-Y extrusion, 5mm)"
 python3 solidify_grooves.py
 
-step "3/9  Generate 29 notepad meshes"
-python3 generate_notepad.py
+step "3/9  Generate 29 notepad meshes (no screw holes — pad faces stay solid)"
+python3 generate_notepad.py --all --no-screw-holes
 
 step "4/9  Build pan body (groove faces kept in body)"
 python3 generate_pan_holes.py
