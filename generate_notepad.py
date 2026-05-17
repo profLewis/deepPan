@@ -2400,9 +2400,15 @@ def main():
 
                 # Post-validate: remove any screw holes inside symmetric hardware masks
                 # Uses the actual MountBase + Sleeve geometry from assembly_view
+                # (Skipped if generate_maps has been archived — only matters when
+                # screw holes are being drilled.)
                 print(f"\nValidating screw holes against hardware masks...")
-                from generate_maps import compute_symmetric_hw_mask, load_assembly_view
-                a_verts_v, a_objects_v = load_assembly_view()
+                try:
+                    from generate_maps import compute_symmetric_hw_mask, load_assembly_view
+                    a_verts_v, a_objects_v = load_assembly_view()
+                except ModuleNotFoundError:
+                    print("  (skipped — generate_maps is now in old/)")
+                    return
 
                 props_list = _json.load(open(Path(output_dir) / "notepad_properties.json"))
                 total_removed = 0
