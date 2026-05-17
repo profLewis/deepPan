@@ -37,11 +37,12 @@ MANIFEST = OUT_DIR / "MANIFEST.sha256"
 TRACKED = (
     ["pan_printable.stl"]
     + [f"pan_piece_outer_{i}.stl" for i in range(6)]
-    + ["pan_piece_central.stl"]
+    + ["pan_piece_central.stl"]   # whole bowl, kept for visualisation
+    + [f"pan_piece_central_half_{i}.stl" for i in range(2)]  # printable halves
     + ["bottom_plate.stl", "plug.stl"]
     + [f"bottom_plate_sector_{i}.stl" for i in range(6)]
     + [f"3mf/{stem}.3mf" for stem in (
-        ["pan_central"]
+        [f"pan_central_half_{i}" for i in range(2)]
         + [f"pan_outer_{i}" for i in range(6)]
         + [f"bottom_plate_sector_{i}" for i in range(6)]
         + ["small_parts_plugs"]

@@ -50,7 +50,7 @@ The full printable assembly is **14 files** ready to print on a Bambu P1S
 
 | File | Qty | Notes |
 |---|---|---|
-| `pipeline_output/3mf/pan_central.3mf` | 1 | Central bowl piece (R < 110) — has 6 pegs on its underside that slot into the wedge tops |
+| `pipeline_output/3mf/pan_central_half_0.3mf` and `_half_1.3mf` | 2 | Central bowl sliced in half at X=0. Each printed FLAT-CUT-FACE DOWN. 3 dowel-pin holes in tabs hanging from the bowl underside at the cut face — mated with 3 plugs from `small_parts_plugs.3mf`. Each half retains 3 of the 6 underside pegs that slot into the wedge tops. |
 | `pipeline_output/3mf/pan_outer_0.3mf` … `pan_outer_5.3mf` | 6 | 60° outer sectors. Each has 2 half-wedges on its tangential edges (with horizontal-peg channels + central-peg receiver + base-screw tap holes) |
 | `pipeline_output/3mf/bottom_plate_sector_0.3mf` … `_5.3mf` | 6 | Pie sectors of the bottom plate. Each has perimeter screws into the drum skirt + 2 wedge-screw clearance holes |
 | `pipeline_output/3mf/small_parts_plugs.3mf` | 1 (= 12 plugs) | 12 horizontal alignment pegs — print all on one plate |

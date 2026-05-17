@@ -2389,9 +2389,14 @@ def main():
                         vert_offset += len(body_verts)
                         f.write("\n")
                 # Generate assembly view so we can validate holes against real hardware
+                # (Optional — skipped if the legacy script has been archived.)
                 print(f"\nGenerating assembly view for hole validation...")
-                import generate_assembly_view
-                generate_assembly_view.main()
+                try:
+                    import generate_assembly_view
+                    generate_assembly_view.main()
+                except ModuleNotFoundError:
+                    print("  (skipped — generate_assembly_view is now in old/)")
+                    generate_assembly_view = None
 
                 # Post-validate: remove any screw holes inside symmetric hardware masks
                 # Uses the actual MountBase + Sleeve geometry from assembly_view
@@ -2466,7 +2471,7 @@ def main():
                     print(f"  All holes validated — none in hardware zones")
 
                 # Regenerate assembly view with updated properties
-                if total_removed > 0:
+                if total_removed > 0 and generate_assembly_view is not None:
                     print(f"  Regenerating assembly view...")
                     generate_assembly_view.main()
 

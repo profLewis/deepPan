@@ -25,9 +25,16 @@ THREEMF_DIR.mkdir(exist_ok=True)
 P1S = 256.0   # P1S build volume edge
 
 
-def lay_flat_centered(mesh):
-    """Translate `mesh` so its bottom is at Z=0 and it is centred on XY=0."""
+def lay_flat_centered(mesh, rotate_y_deg=0):
+    """Translate `mesh` so its bottom is at Z=0 and it is centred on XY=0.
+    If rotate_y_deg is non-zero, first rotates around the Y axis (useful for
+    standing the central-piece halves on their flat-cut face)."""
+    import math
     m = mesh.copy()
+    if rotate_y_deg != 0:
+        Ry = trimesh.transformations.rotation_matrix(
+            math.radians(rotate_y_deg), [0, 1, 0])
+        m.apply_transform(Ry)
     minx, miny, minz = m.bounds[0]
     maxx, maxy, maxz = m.bounds[1]
     cx = (minx + maxx) / 2
@@ -48,41 +55,51 @@ def report(name, mesh):
 
 
 # ── Big pieces — one .3mf each ──
+# Central piece is split into 2 semicircles; each printed with its FLAT CUT
+# FACE on the bed (rotate the +X half by -90° around Y so its X=0 plane
+# becomes Z=0; rotate the -X half by +90° around Y similarly).
 big_pieces = (
-    [("pan_central",            "pan_piece_central.stl")] +
-    [(f"pan_outer_{i}",         f"pan_piece_outer_{i}.stl") for i in range(6)] +
-    [(f"bottom_plate_sector_{i}", f"bottom_plate_sector_{i}.stl") for i in range(6)]
+    [("pan_central_half_0", "pan_piece_central_half_0.stl", -90)] +
+    [("pan_central_half_1", "pan_piece_central_half_1.stl", +90)] +
+    [(f"pan_outer_{i}", f"pan_piece_outer_{i}.stl", 0) for i in range(6)] +
+    [(f"bottom_plate_sector_{i}", f"bottom_plate_sector_{i}.stl", 0)
+     for i in range(6)]
 )
 
-for label, stl_name in big_pieces:
+for label, stl_name, rot_y in big_pieces:
     stl_path = OUT_DIR / stl_name
     if not stl_path.exists():
         print(f"  SKIP {label} — missing {stl_path}")
         continue
     m = trimesh.load(stl_path)
-    m = lay_flat_centered(m)
+    m = lay_flat_centered(m, rotate_y_deg=rot_y)
     out = THREEMF_DIR / f"{label}.3mf"
     export_3mf(m, out)
-    print(f"  {report(label, m):60s} -> {out.name}")
+    note = f" (rot Y {rot_y:+d}°)" if rot_y else ""
+    print(f"  {report(label + note, m):65s} -> {out.name}")
 
 
-# ── Small parts: 12 plugs on one plate ──
+# ── Small parts: 15 plugs on one plate ──
+# 12 plugs for the strut-plane joints + 3 plugs for the central-piece dowel pins
+# (same 4 × 18 mm geometry — reused).
 plug_path = OUT_DIR / "plug.stl"
 if plug_path.exists():
     plug = trimesh.load(plug_path)
     plug = lay_flat_centered(plug)
-    # Arrange 12 plugs in a 4×3 grid with 10 mm spacing
     plug_d = max(plug.bounds[1][0] - plug.bounds[0][0],
                  plug.bounds[1][1] - plug.bounds[0][1]) + 6.0
+    N_PLUGS = 15  # 12 wedge plugs + 3 central-piece dowels
     plugs = []
-    for row in range(3):
-        for col in range(4):
-            p = plug.copy()
-            p.apply_translation([(col - 1.5) * plug_d, (row - 1.0) * plug_d, 0])
-            plugs.append(p)
+    # 5 cols × 3 rows = 15
+    for i in range(N_PLUGS):
+        col = i % 5
+        row = i // 5
+        p = plug.copy()
+        p.apply_translation([(col - 2.0) * plug_d, (row - 1.0) * plug_d, 0])
+        plugs.append(p)
     combined = trimesh.util.concatenate(plugs)
     out = THREEMF_DIR / "small_parts_plugs.3mf"
     export_3mf(combined, out)
-    print(f"  {report('plugs_x12', combined):60s} -> {out.name}")
+    print(f"  {report('plugs_x15', combined):65s} -> {out.name}")
 
 print(f"\nWrote {len(list(THREEMF_DIR.glob('*.3mf')))} .3mf files in {THREEMF_DIR}")

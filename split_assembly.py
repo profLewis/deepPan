@@ -101,6 +101,18 @@ CENTRAL_PEG_DEPTH    = 12.0   # depth of the receiving hole in the wedge tab
 CENTRAL_PEG_PIN_DIA  = 4.0    # Ø of the actual peg baked on the central piece
 CENTRAL_PEG_PIN_LEN  = 6.0    # how far the peg sticks down from the bowl underside
 
+# Central piece SLICE: cut the central piece in half at the X=0 plane → two
+# semicircles. Each half gets 3 tabs hanging from the bowl underside at the
+# cut face, each tab drilled with a horizontal dowel-pin channel that mates
+# to the other half. Pin is the same as the strut alignment plug (4 × 18 mm).
+CENTRAL_HALF_CUT_X     = 0.0       # cut plane
+CENTRAL_TAB_X_LEN      = 14.0      # how far each tab extends INTO the half from cut face
+CENTRAL_TAB_YZ_SIZE    = 14.0      # tab cross-section (Y × Z)
+CENTRAL_TAB_DROP       = 14.0      # how far the tab hangs below the bowl underside
+CENTRAL_PIN_Y_POS      = [-60.0, 0.0, 60.0]  # 3 pin locations along the cut
+CENTRAL_PIN_HOLE_DIA   = 4.2       # slip-fit for the 4mm plug
+CENTRAL_PIN_HOLE_LEN   = 18.0      # 9 mm into each half (the pin spans both)
+
 Z_HALF  = 500.0
 R_BIG   = 600.0
 
@@ -618,5 +630,125 @@ report_fit("central", central)
 out_stl = os.path.join(OUT_DIR, "pan_piece_central.stl")
 export_obj(central, out_stl)
 print(f"  -> {out_stl}")
+
+
+# ───── Slice central piece into 2 semicircles + dowel-pin joinery ─────
+print("\n=== Slicing central piece into 2 semicircles ===")
+
+
+def sample_bowl_underside_raw(x, y):
+    """Raw bowl underside Z at (x, y): second ray-cast hit from above."""
+    hits_z = []
+    cur_z = +200.0
+    for _ in range(8):
+        hit = bvh.ray_cast(Vector((x, y, cur_z)), Vector((0, 0, -1)))
+        if hit[0] is None:
+            break
+        hits_z.append(hit[0].z)
+        cur_z = hit[0].z - 0.1
+    if len(hits_z) >= 2:
+        return hits_z[1]
+    elif len(hits_z) == 1:
+        return hits_z[0] - 5.0
+    return -50.0
+
+
+def make_half_cutter(side):
+    """Big cube occupying the +X or -X half-space (cut at X=CENTRAL_HALF_CUT_X)."""
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
+    cube = bpy.context.active_object
+    cube.name = f"HalfCutter_{side}"
+    for v in cube.data.vertices:
+        v.co.x *= 600.0   # 300 mm half-extent (well past R=110)
+        v.co.y *= 1000.0
+        v.co.z *= 1000.0
+    cube.location = (300.0 * (+1 if side == "plus" else -1) + CENTRAL_HALF_CUT_X,
+                     0.0, 0.0)
+    return cube
+
+
+def make_central_tab(side_sign, y_pos, z_top):
+    """Tab block extending INTO the half from cut face, hanging BELOW the bowl.
+    side_sign = +1 for +X half, -1 for -X half.
+    Tab is centred at (X = side_sign * (CENTRAL_TAB_X_LEN/2), y_pos, z_centre)
+    so it overlaps the cut face by 0 mm and extends inward by CENTRAL_TAB_X_LEN."""
+    tab_z_top = z_top + 1.0       # overlap shell by 1mm
+    tab_z_bot = tab_z_top - CENTRAL_TAB_DROP
+    cx = side_sign * (CENTRAL_TAB_X_LEN / 2.0)
+    cz = (tab_z_top + tab_z_bot) / 2.0
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(cx, y_pos, cz))
+    tab = bpy.context.active_object
+    tab.name = f"Tab_{side_sign:+d}_{int(y_pos)}"
+    for v in tab.data.vertices:
+        v.co.x *= CENTRAL_TAB_X_LEN
+        v.co.y *= CENTRAL_TAB_YZ_SIZE
+        v.co.z *= (tab_z_top - tab_z_bot)
+    return tab, cz   # return pin-hole Z (mid of tab)
+
+
+def make_central_pin_hole(y_pos, z_pos):
+    bpy.ops.mesh.primitive_cylinder_add(
+        radius=CENTRAL_PIN_HOLE_DIA / 2.0,
+        depth=CENTRAL_PIN_HOLE_LEN,
+        location=(CENTRAL_HALF_CUT_X, y_pos, z_pos),
+        rotation=(0.0, math.pi / 2, 0.0),   # axis along X
+        vertices=32,
+    )
+    return bpy.context.active_object
+
+
+for half_i, (side, side_sign) in enumerate([("plus", +1), ("minus", -1)]):
+    print(f"\n— Central half {half_i} ({side} X) —")
+    # Duplicate central, intersect with half-space cutter
+    bpy.ops.object.select_all(action='DESELECT')
+    central.select_set(True)
+    bpy.context.view_layer.objects.active = central
+    bpy.ops.object.duplicate()
+    half = bpy.context.active_object
+    half.name = f"CentralHalf_{half_i}"
+
+    cutter = make_half_cutter(side)
+    bpy.context.view_layer.objects.active = half
+    mod = half.modifiers.new("HalfCut", type='BOOLEAN')
+    mod.operation = 'INTERSECT'
+    mod.object = cutter
+    mod.solver = SOLVER
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    bpy.data.objects.remove(cutter, do_unlink=True)
+    print(f"  after slice: verts={len(half.data.vertices):,}")
+
+    # Add 3 tabs and drill pin holes
+    pin_z_positions = []
+    for y_pos in CENTRAL_PIN_Y_POS:
+        # Sample raw bowl underside at (X=0, y_pos) so the tab attaches to the shell
+        bowl_z = sample_bowl_underside_raw(CENTRAL_HALF_CUT_X, y_pos)
+        tab, pin_z = make_central_tab(side_sign, y_pos, bowl_z)
+        bpy.context.view_layer.objects.active = half
+        mod = half.modifiers.new(f"Tab_{int(y_pos)}", type='BOOLEAN')
+        mod.operation = 'UNION'
+        mod.object = tab
+        mod.solver = SOLVER
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+        bpy.data.objects.remove(tab, do_unlink=True)
+        pin_z_positions.append((y_pos, pin_z))
+
+    for y_pos, pin_z in pin_z_positions:
+        cyl = make_central_pin_hole(y_pos, pin_z)
+        bpy.context.view_layer.objects.active = half
+        mod = half.modifiers.new(f"Pin_{int(y_pos)}", type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cyl
+        mod.solver = SOLVER
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+        bpy.data.objects.remove(cyl, do_unlink=True)
+        print(f"  tab + pin hole at Y={y_pos:+.0f}, pin Z={pin_z:.1f}")
+
+    print(f"  final verts: {len(half.data.vertices):,}")
+    report_fit(f"central_half_{half_i}", half)
+    out_stl = os.path.join(OUT_DIR, f"pan_piece_central_half_{half_i}.stl")
+    export_obj(half, out_stl)
+    print(f"  -> {out_stl}")
+    bpy.data.objects.remove(half, do_unlink=True)
+
 
 print("\nDone.")
