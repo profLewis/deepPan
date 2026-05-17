@@ -52,23 +52,26 @@ TRACKED = (
 
 def sha256_file(p: Path) -> str:
     """Stable SHA-256 of a file.  For .3mf zips we hash the EXTRACTED 3D-model
-    contents (the actual mesh data) — the raw zip embeds creation timestamps
-    and random UUIDs that change every build, so the raw zip's SHA-256 is not
-    deterministic. Hashing the canonical model XML inside is."""
+    contents AFTER stripping non-deterministic attributes (random UUIDs,
+    creation timestamps).  The actual mesh data (vertices/triangles) IS
+    deterministic, but trimesh's 3MF export generates a fresh `p:UUID=...`
+    per object per write — without stripping it we get false mismatches."""
     if p.suffix.lower() == ".3mf":
+        import re
         import zipfile
+        # Strip random/timestamp-dependent attributes
+        STRIP_RE = re.compile(
+            rb'\s+(?:p:UUID|p:Path|UUID)="[^"]*"'
+        )
         h = hashlib.sha256()
         with zipfile.ZipFile(p, "r") as z:
-            # 3MF stores its mesh content in 3D/<name>.model files.  Hash each
-            # of those in alphabetical order to ignore zip-ordering differences.
             for name in sorted(n for n in z.namelist() if n.startswith("3D/")
                                and n.endswith(".model")):
                 with z.open(name) as f:
-                    while True:
-                        chunk = f.read(1 << 20)
-                        if not chunk:
-                            break
-                        h.update(chunk)
+                    data = f.read()
+                # Remove non-deterministic attributes from the XML
+                data = STRIP_RE.sub(b"", data)
+                h.update(data)
         return h.hexdigest()
     h = hashlib.sha256()
     with open(p, "rb") as f:
