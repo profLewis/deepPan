@@ -50,6 +50,25 @@ TRACKED = (
 
 
 def sha256_file(p: Path) -> str:
+    """Stable SHA-256 of a file.  For .3mf zips we hash the EXTRACTED 3D-model
+    contents (the actual mesh data) — the raw zip embeds creation timestamps
+    and random UUIDs that change every build, so the raw zip's SHA-256 is not
+    deterministic. Hashing the canonical model XML inside is."""
+    if p.suffix.lower() == ".3mf":
+        import zipfile
+        h = hashlib.sha256()
+        with zipfile.ZipFile(p, "r") as z:
+            # 3MF stores its mesh content in 3D/<name>.model files.  Hash each
+            # of those in alphabetical order to ignore zip-ordering differences.
+            for name in sorted(n for n in z.namelist() if n.startswith("3D/")
+                               and n.endswith(".model")):
+                with z.open(name) as f:
+                    while True:
+                        chunk = f.read(1 << 20)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+        return h.hexdigest()
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
