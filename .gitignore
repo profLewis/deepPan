@@ -42,9 +42,13 @@ data/*.png
 data/Tenor Pan only.obj
 
 # Final outputs: only the build script writes here. Keep the directory but
-# ignore generated artifacts so we don't commit gigabytes of STL.
+# ignore generated STL/OBJ binaries so we don't commit gigabytes.
+# The MANIFEST.sha256 and Bambu .3mf build plates ARE committed so end users
+# can verify regeneration and print without rebuilding from scratch.
 pipeline_output/*.obj
 pipeline_output/*.stl
+!pipeline_output/MANIFEST.sha256
+!pipeline_output/3mf/
 
 # Python / system noise
 __pycache__/

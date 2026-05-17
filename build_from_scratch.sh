@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
-# Build pipeline_output/pan_printable.{obj,stl} from scratch.
+# Build the entire DEFINITIVE deepPan model from scratch, including:
+#   - pan_printable.{obj,stl}            : fused, watertight, printable pan body
+#   - pan_piece_central.stl              : central piece (1)
+#   - pan_piece_outer_0..5.stl           : 6 outer 60° sectors with half-wedges
+#   - bottom_plate.stl                   : full plate (for visualisation only)
+#   - bottom_plate_sector_0..5.stl       : 6 plate sectors (P1S-printable)
+#   - plug.stl                           : alignment-peg (4 × 18 mm)
+#   - 3mf/*.3mf                          : 14 Bambu P1S build-plates
+#   - assembly_view_with_plugs.{obj,stl} : multi-object assembly view
 #
 # Inputs:
 #   data/Tenor Pan only.obj
 #   data/pan_centroid_offset.json
 #   data/notepads/notepad_properties.json
-#   (all Python scripts, generate_sector.py NOTE_MAPPING)
 #
-# Outputs (all under pipeline_output/):
-#   pan_printable.{obj,stl}            — final fused, watertight, printable model
-#   pan_holes_solid_merged.{obj,stl}   — body with central+inner groove ellipsoids merged
-#   groove_ellipsoids_{central,inner,outer}.{obj,stl}
-#   pan_piece_central.stl, pan_piece_outer_0..5.stl  — 7 split parts
-#
-# Run end-to-end (≈ 40–60 min total):
+# Run end-to-end (≈ 90 min total):
 #   ./build_from_scratch.sh
+#
+# Then verify:
+#   python3 test_pipeline.py        # quick checksum check against MANIFEST
+#   python3 test_pipeline.py --full # full regenerate-and-compare (~90 min)
 
 set -euo pipefail
 
@@ -60,11 +65,28 @@ python3 strip_debris.py \
     --in=pipeline_output/pan_printable.stl \
     --out=pipeline_output/pan_printable.stl
 
-step "OPTIONAL  Split into 7 printable pieces (≈ 25 min EXACT boolean × 7)"
-echo "  Skipped by default — run manually if you need the parts:"
-echo "    \"\$BLENDER\" --background --python split_assembly.py -- pipeline_output/pan_printable.stl"
+step "10/14  Split body into 7 printable pieces (truncates body at Z=-122, solidifies drum wall, builds strut wedges with joinery, EXACT booleans — ~25 min)"
+"$BLENDER" --background --python split_assembly.py -- --solver=EXACT
+
+step "11/14  Generate plug.stl (4 × 18 mm horizontal alignment peg)"
+python3 generate_plug.py
+
+step "12/14  Generate bottom plate + split into 6 P1S-printable sectors"
+python3 generate_bottom_plate.py
+python3 split_bottom_plate.py
+
+step "13/14  Generate Bambu P1S .3mf build plates"
+python3 generate_3mf.py
+
+step "14/14  Generate multi-object assembly view (no outer sleeves, per-pad mounts)"
+python3 generate_assembly_view_with_plugs.py
 
 step "DONE"
-ls -la pipeline_output/pan_printable.stl
+ls -la pipeline_output/pan_printable.stl pipeline_output/3mf/
 echo
-echo "Inspect:  pipeline_output/pan_printable.stl"
+echo "Inspect the assembled model:  pipeline_output/assembly_view_with_plugs.stl"
+echo "Open .3mf files in Bambu Studio: pipeline_output/3mf/"
+echo
+echo "Verify against committed reference:"
+echo "  python3 test_pipeline.py            # quick checksum check"
+echo "  python3 test_pipeline.py --full     # full regenerate-and-compare"

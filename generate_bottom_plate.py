@@ -40,8 +40,9 @@ def main():
     p.add_argument("--hole-circle-margin", type=float, default=10.0,
                    help="hole circle radius = skirt_r - this (mm); "
                         "holes sit inboard of the skirt outer edge")
-    p.add_argument("--skirt-y", type=float, default=-122.7,
-                   help="Y of drum-skirt bottom rim (mm); plate top sits here")
+    p.add_argument("--skirt-y", type=float, default=-122.0,
+                   help="Y of drum-skirt bottom rim (mm); plate top sits here. "
+                        "Matches the body truncation level in split_assembly.py.")
     p.add_argument("--out-dir", default="pipeline_output")
     args = p.parse_args()
 
@@ -108,6 +109,52 @@ def main():
         plate = plate.difference(ctr)
         print(f"  hole at ({h['x']:+7.2f}, {h['y']:+7.2f})  "
               f"angle={h['angle_deg']:6.2f}deg")
+
+    # ── Strut joinery: 12 wedge-screw clearance holes ──
+    # (Plugs are now HORIZONTAL pegs between adjacent half-wedges, so the
+    #  bottom plate no longer needs vertical plug pass-throughs.)
+    # Positions MUST match split_assembly.py constants.
+    STRUT_ANGLES_DEG = [15.0, 75.0, 135.0, 195.0, 255.0, 315.0]
+    TAP_HOLE_R       = 170.0
+    TAP_OFFSET       = 5.0    # tangential offset from strut plane (matches split_assembly.py)
+    WEDGE_SCREW_CLEAR_R    = 2.25  # 4.5mm Ø clearance for M4
+    WEDGE_SCREW_COUNTER_R  = 4.2   # 8.4mm Ø countersink for M4 flat head
+    WEDGE_SCREW_COUNTER_DEPTH = 2.5
+
+    print("\n  ── 12 wedge-screw holes (M4 from below, countersunk on underside) ──")
+
+    def cut_through(plate, x, y, r):
+        bore = trimesh.creation.cylinder(
+            radius=r, height=args.thickness + 2.0, sections=32,
+        )
+        bore.apply_translation([x, y, plate_center_z])
+        return plate.difference(bore)
+
+    def cut_countersink_below(plate, x, y, ctr_r, ctr_depth):
+        """Countersink opens DOWNWARD from the plate's bottom face, so the screw
+        head (visible only from below) sits flush with the plate's underside."""
+        ctr = trimesh.creation.cylinder(
+            radius=ctr_r, height=ctr_depth + 0.5, sections=32,
+        )
+        ctr.apply_translation([x, y, z_bot + ctr_depth / 2 - 0.25])
+        return plate.difference(ctr)
+
+    wedge_screw_holes = []
+    for ang_deg in STRUT_ANGLES_DEG:
+        ang = math.radians(ang_deg)
+        tx, ty = -math.sin(ang), math.cos(ang)  # tangential unit vector
+        for side in (+1, -1):
+            x = TAP_HOLE_R * math.cos(ang) + tx * side * TAP_OFFSET
+            y = TAP_HOLE_R * math.sin(ang) + ty * side * TAP_OFFSET
+            plate = cut_through(plate, x, y, WEDGE_SCREW_CLEAR_R)
+            plate = cut_countersink_below(plate, x, y,
+                                          WEDGE_SCREW_COUNTER_R,
+                                          WEDGE_SCREW_COUNTER_DEPTH)
+            wedge_screw_holes.append({
+                "x": x, "y": y, "angle_deg": ang_deg, "side": side,
+            })
+            print(f"    wedge-screw  @ {ang_deg:5.1f}° side {'+' if side > 0 else '-'}  "
+                  f"({x:+7.2f}, {y:+7.2f})  M4 csk from below")
 
     # Export
     obj_path = out_dir / "bottom_plate.obj"

@@ -10,14 +10,64 @@
 
 This project creates a **3D printable tenor steel pan** from a 3D scanned model. The pan is split into printable sections with individually mountable note pads, enabling replacement of damaged notes, experimentation with materials and tuning, and educational exploration of steel pan acoustics.
 
-## Quick build (recreate from scratch)
+## Quick build (recreate the DEFINITIVE model from scratch)
+
+The committed model in `pipeline_output/` is the **definitive build**. The
+build pipeline below regenerates it byte-for-byte from `data/Tenor Pan only.obj`.
 
 ```bash
-./build_from_scratch.sh
+./build_from_scratch.sh         # full regenerate (~90 min)
+python3 test_pipeline.py        # quick checksum check against committed manifest
+python3 test_pipeline.py --full # full byte-for-byte regenerate-and-compare
 ```
 
-Reads `data/Tenor Pan only.obj` and produces a watertight, printable model at `pipeline_output/pan_printable.stl`.
-End-to-end the script runs 9 stages: groove extraction → solidify → notepads → body shell → boundary extension → thickening → groove-replacement ellipsoids → boolean-merge body+ellipsoids → voxel-remesh+pads+outer-grooves+debris-strip. Takes 40–60 minutes. Splitting into 7 printable parts (`split_assembly.py`) is an optional extra step.
+The pipeline runs 14 stages:
+
+1. Extract groove surfaces from source bowl
+2. Solidify grooves (5 mm extrusion)
+3. Generate 29 notepad meshes (no screw holes)
+4. Build pan body (groove faces kept in body)
+5. Extend outer-ring pad-hole boundaries
+6. Thicken body to 5 mm solid
+7. Generate per-pad groove-replacement ellipsoids
+8. Merge body with central+inner ellipsoids
+9. Voxel-remesh + pads + outer grooves + debris strip → `pan_printable.stl`
+10. Split body into 7 printable pieces (truncate at Z=−122, solidify drum wall,
+    build strut wedges with joinery)
+11. Generate plug.stl (4 × 18 mm alignment peg)
+12. Generate full bottom plate + split into 6 P1S-printable sectors
+13. Generate Bambu P1S `.3mf` build plates (14 files)
+14. Generate multi-object assembly view (no outer sleeves, per-pad mounts)
+
+`pipeline_output/MANIFEST.sha256` records the SHA-256 of every committed
+output; `test_pipeline.py` compares regenerated files against it (and removes
+the redundant regenerated copies on a clean match).
+
+## Printable parts and 3MF files
+
+The full printable assembly is **14 files** ready to print on a Bambu P1S
+(256 × 256 × 256 build volume):
+
+| File | Qty | Notes |
+|---|---|---|
+| `pipeline_output/3mf/pan_central.3mf` | 1 | Central bowl piece (R < 110) — has 6 pegs on its underside that slot into the wedge tops |
+| `pipeline_output/3mf/pan_outer_0.3mf` … `pan_outer_5.3mf` | 6 | 60° outer sectors. Each has 2 half-wedges on its tangential edges (with horizontal-peg channels + central-peg receiver + base-screw tap holes) |
+| `pipeline_output/3mf/bottom_plate_sector_0.3mf` … `_5.3mf` | 6 | Pie sectors of the bottom plate. Each has perimeter screws into the drum skirt + 2 wedge-screw clearance holes |
+| `pipeline_output/3mf/small_parts_plugs.3mf` | 1 (= 12 plugs) | 12 horizontal alignment pegs — print all on one plate |
+
+**Joinery** (no visible screw holes on the outside):
+
+- **Adjacent outer pieces** → 2 horizontal pegs at each strut plane (R=130 + R=200), tangential axis, pushed in from the cavity side
+- **Central piece** → 6 pegs baked onto its underside drop into receiver holes carved in the wedge tab tops
+- **Bottom plate → wedges** → 12 M4 screws from below the plate, countersunk on the plate's underside
+- **Bottom plate → drum skirt** → 8 M4 perimeter screws
+
+## Inspecting the assembly
+
+Open `pipeline_output/assembly_view_with_plugs.obj` in Blender — 49 separately
+labelled objects (7 pan pieces + bottom plate + 12 horizontal pegs + 12 outer
+mount bases + 17 central/inner push-caps). Each can be toggled on/off
+independently to inspect any sub-system.
 
 ## Tenor Pan Layout
 
