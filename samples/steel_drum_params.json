@@ -1,0 +1,16 @@
+{
+  "attack": 14,
+  "decay": 564,
+  "sustain": 5,
+  "release": 409,
+  "fundamental": 100,
+  "harmonic2": 30,
+  "harmonic3": 5,
+  "harmonic4": 100,
+  "sub_bass": 100,
+  "detune": 2,
+  "filter": 1793,
+  "brightness": 100,
+  "duration": 1.4790022675736962,
+  "volume": 85
+}
